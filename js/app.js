@@ -5,374 +5,715 @@
 
 'use strict';
 
-// ── Global state ──────────────────────────────────────────
-let currentUser     = null;
+// ── Global State ────────────────────────────────────────────
 let currentUserData = null;
-let calendarInstance = null;
-let activeConversationId = null;
-let allCoaches      = [];
+let currentThreadId = null;
+let calendarInitialized = false;
+let calendar;
+let unsubscribers = [];
 
-// ── Auth guard ────────────────────────────────────────────
+// ── Auth State ───────────────────────────────────────────────
 auth.onAuthStateChanged(async (user) => {
   if (!user) {
     window.location.href = 'index.html';
     return;
   }
-  currentUser = user;
 
-  // Load user profile from Firestore
   try {
     const snap = await db.collection('users').doc(user.uid).get();
     if (snap.exists) {
       currentUserData = { uid: user.uid, ...snap.data() };
     } else {
-      // First login — create profile (treat as manager if no doc exists)
-      currentUserData = {
-        uid:   user.uid,
-        name:  user.displayName || user.email,
+      // Create a user doc if it doesn't exist (e.g. first Google login)
+      const newUser = {
+        uid: user.uid,
+        name: user.displayName || user.email.split('@')[0],
         email: user.email,
-        role:  'manager',
+        role: 'coach',
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
       };
-      await db.collection('users').doc(user.uid).set(currentUserData);
+      await db.collection('users').doc(user.uid).set(newUser);
+      currentUserData = { ...newUser };
     }
-  } catch (e) {
-    console.error('Failed to load user profile:', e);
-    currentUserData = {
-      uid:   user.uid,
-      name:  user.displayName || user.email,
-      email: user.email,
-      role:  'manager',
-    };
+
+    // Populate sidebar user info
+    const nameEl = document.getElementById('userName');
+    const initEl = document.getElementById('userInitials');
+    const roleEl = document.getElementById('userRoleLabel');
+
+    if (nameEl) nameEl.textContent = currentUserData.name || currentUserData.email;
+    if (initEl) initEl.textContent = (currentUserData.name || currentUserData.email || '?')
+      .split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+    if (roleEl) {
+      const roleMap = { manager: 'מנהל', coach: 'מאמן', coordinator: 'רכז' };
+      roleEl.textContent = roleMap[currentUserData.role] || currentUserData.role || '—';
+    }
+
+    // Role-based UI: hide manager-only elements for non-managers
+    if (currentUserData.role !== 'manager') {
+      document.querySelectorAll('.manager-only').forEach(el => {
+        el.style.display = 'none';
+      });
+    }
+
+    // Dispatch event so inline scripts can react
+    document.dispatchEvent(new CustomEvent('userLoaded'));
+
+    // Load all data
+    loadAllData();
+
+  } catch (err) {
+    console.error('Error loading user data:', err);
+    showToast('שגיאה בטעינת נתוני המשתמש', 'error');
   }
-
-  // Update UI
-  applyUserUI();
-  document.dispatchEvent(new Event('userLoaded'));
-
-  // Start data listeners
-  initDataListeners();
 });
 
-// ── Apply user info to sidebar ────────────────────────────
-function applyUserUI() {
-  const name   = currentUserData?.name  || currentUserData?.email || '?';
-  const role   = currentUserData?.role  || 'coach';
-  const initEl = document.getElementById('userInitials');
-  const nameEl = document.getElementById('userName');
-  const roleEl = document.getElementById('userRoleLabel');
+// ── Load All Data ────────────────────────────────────────────
+function loadAllData() {
+  loadLessonPlans();
+  loadSummaries();
+  loadSessions();
+  loadCoaches();
+  loadEquipment();
+  loadMessages();
+  loadGallery();
+  loadDashboardStats();
 
-  if (initEl) initEl.textContent = name.charAt(0).toUpperCase();
-  if (nameEl) nameEl.textContent = name;
-  if (roleEl) {
-    const labels = { manager: 'מנהל', coach: 'מאמן', coordinator: 'רכז' };
-    roleEl.textContent = labels[role] || role;
+  // Logout button
+  const logoutBtn = document.getElementById('logoutBtn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+      unsubscribers.forEach(fn => fn());
+      await auth.signOut();
+    });
   }
-
-  // Role-based visibility
-  const isManager = role === 'manager';
-  document.querySelectorAll('.manager-only, [data-roles="manager"]').forEach(el => {
-    el.style.display = isManager ? '' : 'none';
-  });
 }
 
-// ── Logout ────────────────────────────────────────────────
-document.getElementById('logoutBtn')?.addEventListener('click', async () => {
-  await auth.signOut();
-  window.location.href = 'index.html';
-});
-
-// ── Sidebar navigation ────────────────────────────────────
-function navigateTo(section) {
+// ── Navigation ───────────────────────────────────────────────
+function navigateTo(sectionName) {
   // Hide all sections
-  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-  // Show target
-  const target = document.getElementById('sec-' + section);
+  document.querySelectorAll('.section').forEach(sec => sec.classList.remove('active'));
+  // Remove active from all nav items
+  document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
+
+  // Show target section
+  const target = document.getElementById('sec-' + sectionName);
   if (target) target.classList.add('active');
 
-  // Update nav items
-  document.querySelectorAll('.nav-item[data-section]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.section === section);
-  });
+  // Activate matching nav button
+  const navBtn = document.querySelector(`.nav-item[data-section="${sectionName}"]`);
+  if (navBtn) navBtn.classList.add('active');
+
+  // Render calendar when navigating to it (needs to be visible first)
+  if (sectionName === 'calendar' && !calendarInitialized) {
+    setTimeout(() => { initCalendar(); }, 50);
+  }
 
   // Close sidebar on mobile
-  if (window.innerWidth < 768) {
+  if (window.innerWidth <= 768) {
     document.getElementById('sidebar')?.classList.remove('open');
   }
-
-  // Special init for calendar
-  if (section === 'calendar' && calendarInstance) {
-    setTimeout(() => calendarInstance.updateSize(), 100);
-  }
-
-  // Init gallery when navigated to
-  if (section === 'gallery') renderGallery();
-  if (section === 'messages') renderMessages();
 }
 
-// Attach click handlers to nav items
+// Wire up nav items
 document.querySelectorAll('.nav-item[data-section]').forEach(btn => {
-  btn.addEventListener('click', () => navigateTo(btn.dataset.section));
+  btn.addEventListener('click', () => {
+    navigateTo(btn.dataset.section);
+  });
 });
 
-// Sidebar toggle (mobile)
+// ── Sidebar Mobile Toggle ────────────────────────────────────
 document.getElementById('sidebarToggle')?.addEventListener('click', () => {
   document.getElementById('sidebar')?.classList.toggle('open');
 });
 
-// ── Toast ─────────────────────────────────────────────────
+// Close sidebar when clicking outside on mobile
+document.addEventListener('click', (e) => {
+  if (window.innerWidth <= 768) {
+    const sidebar = document.getElementById('sidebar');
+    const toggle  = document.getElementById('sidebarToggle');
+    if (sidebar && !sidebar.contains(e.target) && !toggle?.contains(e.target)) {
+      sidebar.classList.remove('open');
+    }
+  }
+});
+
+// ── Toast ─────────────────────────────────────────────────────
 function showToast(message, type = 'info') {
   const container = document.getElementById('toastContainer');
   if (!container) return;
+
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
-  const icons = { success: 'fa-check-circle', error: 'fa-times-circle', info: 'fa-info-circle' };
-  toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i><span>${message}</span>`;
+  toast.textContent = message;
   container.appendChild(toast);
-  setTimeout(() => toast.classList.add('show'), 10);
+
   setTimeout(() => {
-    toast.classList.remove('show');
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(-30px)';
+    toast.style.transition = 'all 0.3s ease';
     setTimeout(() => toast.remove(), 300);
   }, 3500);
 }
 
-// ── Firestore listeners ───────────────────────────────────
-function initDataListeners() {
-  listenCoaches();
-  listenSummaries();
-  listenEquipment();
-  listenLessonPlans();
-  listenMessages();
-  listenSessions();
-  loadDashboardStats();
-  initCalendar();
-}
+// ── FullCalendar ──────────────────────────────────────────────
+function initCalendar() {
+  const el = document.getElementById('calendar');
+  if (!el || calendarInitialized) return;
+  calendarInitialized = true;
 
-// ── Coaches ───────────────────────────────────────────────
-function listenCoaches() {
-  db.collection('users').onSnapshot(snap => {
-    allCoaches = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderCoaches();
-    populateCoachSelects();
-  }, err => console.error('coaches listener:', err));
-}
+  calendar = new FullCalendar.Calendar(el, {
+    locale: 'he',
+    direction: 'rtl',
+    initialView: 'dayGridMonth',
+    headerToolbar: {
+      start: 'prev,next today',
+      center: 'title',
+      end: 'dayGridMonth,timeGridWeek'
+    },
+    events: [],
+    eventClick: (info) => {
+      const { title, extendedProps } = info.event;
+      showToast(`${title} — ${extendedProps.school || ''}`, 'info');
+    }
+  });
+  calendar.render();
 
-function renderCoaches() {
-  const grid = document.getElementById('coaches-grid');
-  if (!grid) return;
-  if (!allCoaches.length) {
-    grid.innerHTML = '<p style="color:var(--text-3);padding:24px;text-align:center">אין חברי צוות עדיין</p>';
-    return;
-  }
-  const roleLabels = { manager: 'מנהל', coach: 'מאמן', coordinator: 'רכז' };
-  grid.innerHTML = `<div class="grid-2">${allCoaches.map(c => `
-    <div class="card" style="display:flex;align-items:center;gap:16px;padding:20px">
-      <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary-lighter));display:flex;align-items:center;justify-content:center;font-size:1.4rem;font-weight:700;color:white;flex-shrink:0">
-        ${(c.name || c.email || '?').charAt(0).toUpperCase()}
-      </div>
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:700;font-size:1rem;margin-bottom:2px">${esc(c.name || c.email)}</div>
-        <div style="font-size:.8rem;color:var(--text-3)">${esc(c.email || '')}</div>
-        ${c.phone ? `<div style="font-size:.8rem;color:var(--text-3)">${esc(c.phone)}</div>` : ''}
-        ${c.school ? `<div style="font-size:.8rem;color:var(--text-2);margin-top:4px"><i class="fas fa-school" style="opacity:.6"></i> ${esc(c.school)}</div>` : ''}
-      </div>
-      <div>
-        <span style="background:rgba(230,57,70,.15);color:var(--primary-lighter);padding:4px 10px;border-radius:20px;font-size:.75rem;font-weight:700">
-          ${roleLabels[c.role] || c.role || 'מאמן'}
-        </span>
-      </div>
-    </div>
-  `).join('')}</div>`;
-}
-
-function populateCoachSelects() {
-  ['sess-coach', 'msg-to'].forEach(id => {
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    const current = sel.value;
-    sel.innerHTML = id === 'msg-to'
-      ? '<option value="">בחר נמען...</option>'
-      : '<option value="">בחר מאמן...</option>';
-    allCoaches.forEach(c => {
-      if (c.uid === currentUserData?.uid) return; // don't show self in messages
-      const opt = document.createElement('option');
-      opt.value = c.id;
-      opt.textContent = c.name || c.email;
-      sel.appendChild(opt);
+  // Load sessions into calendar
+  db.collection('sessions').get().then(snap => {
+    snap.forEach(doc => {
+      const d = doc.data();
+      const start = d.date + (d.startTime ? 'T' + d.startTime : '');
+      const end   = d.date + (d.endTime   ? 'T' + d.endTime   : '');
+      calendar.addEvent({
+        id: doc.id,
+        title: `${d.coachName || ''} — ${d.school || ''}`,
+        start,
+        end: d.endTime ? end : undefined,
+        extendedProps: { school: d.school, coachName: d.coachName }
+      });
     });
-    if (current) sel.value = current;
   });
 }
 
-// ── Summaries ─────────────────────────────────────────────
-let allSummaries = [];
-
-function listenSummaries() {
-  let query = db.collection('summaries').orderBy('createdAt', 'desc').limit(100);
-  // Coaches see only their own summaries
-  if (currentUserData?.role === 'coach' || currentUserData?.role === 'coordinator') {
-    query = query.where('coachUid', '==', currentUserData.uid);
-  }
-  query.onSnapshot(snap => {
-    allSummaries = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderSummaries();
-    renderRecentSummaries();
-    updateCoachStats();
-  }, err => console.error('summaries listener:', err));
+// ══════════════════════════════════════════════════════════════
+// LESSON PLANS
+// ══════════════════════════════════════════════════════════════
+function loadLessonPlans() {
+  const unsub = db.collection('lessonPlans').orderBy('number').onSnapshot(
+    renderLessonPlans,
+    err => console.error('loadLessonPlans:', err)
+  );
+  unsubscribers.push(unsub);
 }
 
-function renderSummaries() {
-  const list = document.getElementById('summaries-list');
+function renderLessonPlans(snapshot) {
+  const list = document.getElementById('lesson-plans-list');
   if (!list) return;
-  if (!allSummaries.length) {
-    list.innerHTML = '<p style="color:var(--text-3);padding:24px;text-align:center">אין סיכומים עדיין</p>';
+
+  if (snapshot.empty) {
+    list.innerHTML = '<div class="loading-center" style="color:var(--text-3)"><p>אין מערכי שיעור עדיין</p></div>';
     return;
   }
-  list.innerHTML = allSummaries.map(s => summaryCard(s, true)).join('');
+
+  list.innerHTML = snapshot.docs.map(doc => {
+    const d = doc.data();
+    const isManager = currentUserData?.role === 'manager';
+    const managerActions = isManager ? `
+      <button class="btn-ghost btn-sm" onclick="deleteLessonPlan('${doc.id}')">
+        <i class="fas fa-trash" style="color:var(--danger)"></i>
+      </button>` : '';
+
+    return `
+      <div class="lesson-plan-card" id="lp-${doc.id}">
+        <span class="lp-number">מערך ${d.number || ''}</span>
+        <div class="lp-title">${escHtml(d.title || '')}</div>
+        ${d.description ? `<div class="lp-desc">${escHtml(d.description)}</div>` : ''}
+        <div class="lp-date"><i class="fas fa-calendar-alt"></i> ${formatDate(d.date)}</div>
+        <div class="lp-actions">
+          ${d.videoUrl ? `<a href="${escHtml(d.videoUrl)}" target="_blank" class="btn-secondary btn-sm"><i class="fab fa-youtube" style="color:var(--danger)"></i> סרטון</a>` : ''}
+          ${d.fileUrl  ? `<a href="${escHtml(d.fileUrl)}"  target="_blank" class="btn-secondary btn-sm"><i class="fas fa-file-pdf"></i> קובץ</a>` : ''}
+          ${managerActions}
+        </div>
+      </div>`;
+  }).join('');
 }
 
-function summaryCard(s, full = false) {
-  const date   = s.date ? s.date : (s.createdAt?.toDate ? s.createdAt.toDate().toLocaleDateString('he-IL') : '—');
-  const rating = '★'.repeat(s.rating || 3) + '☆'.repeat(5 - (s.rating || 3));
-  const cls    = [
-    'summary-card',
-    s.hasDiscipline ? 'discipline' : '',
-    s.hasEquipment  ? 'equipment'  : '',
-  ].filter(Boolean).join(' ');
-
-  return `<div class="${cls}" onclick="openSummaryModal('${s.id}')">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
-      <div>
-        <div style="font-weight:700;font-size:1rem">${esc(s.school || '—')} — ${esc(s.group || '—')}</div>
-        <div style="font-size:.8rem;color:var(--text-3);margin-top:2px">${esc(s.coachName || '')}${s.coachName && date ? ' · ' : ''}${date}</div>
-      </div>
-      <div style="font-size:1.1rem;color:#f5a623;letter-spacing:1px">${rating}</div>
-    </div>
-    <div style="font-size:.875rem;color:var(--text-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(s.summary || '')}</div>
-    ${s.hasDiscipline ? '<span style="display:inline-block;margin-top:8px;background:rgba(230,57,70,.15);color:var(--primary-lighter);padding:2px 8px;border-radius:12px;font-size:.72rem;font-weight:700"><i class="fas fa-exclamation-triangle"></i> משמעת</span>' : ''}
-    ${s.hasEquipment  ? '<span style="display:inline-block;margin-top:8px;margin-right:6px;background:rgba(255,165,0,.15);color:#f5a623;padding:2px 8px;border-radius:12px;font-size:.72rem;font-weight:700"><i class="fas fa-tools"></i> ציוד</span>' : ''}
-  </div>`;
+function openLessonPlanModal() {
+  document.getElementById('lessonPlanModal').classList.add('show');
 }
 
-function renderRecentSummaries() {
-  const el = document.getElementById('recent-summaries');
-  if (!el) return;
-  const recent = allSummaries.slice(0, 5);
-  if (!recent.length) {
-    el.innerHTML = '<p style="color:var(--text-3);padding:12px 0">אין סיכומים עדיין</p>';
-    return;
-  }
-  el.innerHTML = recent.map(s => summaryCard(s)).join('');
+function closeLessonPlanModal() {
+  document.getElementById('lessonPlanModal').classList.remove('show');
+  document.getElementById('lessonPlanForm')?.reset();
+  const fn = document.getElementById('lp-file-name');
+  if (fn) fn.textContent = 'לחץ לבחירת קובץ';
 }
 
-function openSummaryModal(id) {
-  const s = allSummaries.find(x => x.id === id);
-  if (!s) return;
-  const date   = s.date || (s.createdAt?.toDate ? s.createdAt.toDate().toLocaleDateString('he-IL') : '—');
-  const rating = '★'.repeat(s.rating || 3) + '☆'.repeat(5 - (s.rating || 3));
-  document.getElementById('summaryModalContent').innerHTML = `
-    <div style="padding:20px 24px">
-      <div class="form-grid">
-        <div><strong>בית ספר</strong><p>${esc(s.school || '—')}</p></div>
-        <div><strong>קבוצה</strong><p>${esc(s.group || '—')}</p></div>
-        <div><strong>תאריך</strong><p>${date}</p></div>
-        <div><strong>משתתפים</strong><p>${s.attendance || '—'}</p></div>
-        <div><strong>מאמן</strong><p>${esc(s.coachName || '—')}</p></div>
-        <div><strong>דירוג</strong><p style="color:#f5a623;font-size:1.2rem">${rating}</p></div>
-      </div>
-      <hr style="border-color:var(--border);margin:16px 0">
-      <div class="mb-16"><strong>סיכום השיעור:</strong><p style="margin-top:6px;white-space:pre-wrap">${esc(s.summary || '')}</p></div>
-      ${s.highlights ? `<div class="mb-16"><strong>נקודות חיוביות:</strong><p style="margin-top:6px;white-space:pre-wrap">${esc(s.highlights)}</p></div>` : ''}
-      ${s.hasDiscipline ? `<div class="mb-16" style="background:rgba(230,57,70,.08);border-radius:8px;padding:12px"><strong style="color:var(--primary-lighter)"><i class="fas fa-exclamation-triangle"></i> בעיית משמעת:</strong><p style="margin-top:6px;white-space:pre-wrap">${esc(s.disciplineDetails || '—')}</p></div>` : ''}
-      ${s.hasEquipment  ? `<div class="mb-16" style="background:rgba(255,165,0,.08);border-radius:8px;padding:12px"><strong style="color:#f5a623"><i class="fas fa-tools"></i> בעיית ציוד:</strong><p style="margin-top:6px;white-space:pre-wrap">${esc(s.equipmentDetails || '—')}</p></div>` : ''}
-      ${s.notes ? `<div><strong>הערות נוספות:</strong><p style="margin-top:6px;white-space:pre-wrap">${esc(s.notes)}</p></div>` : ''}
-    </div>`;
-  document.getElementById('summaryModal').classList.add('show');
-}
-
-// ── Submit Summary Form ───────────────────────────────────
-async function submitSummary(event) {
-  event.preventDefault();
-  const btn = document.getElementById('submitSummaryBtn');
+async function submitLessonPlan(e) {
+  e.preventDefault();
+  const btn = document.getElementById('submitLessonPlanBtn');
   btn.disabled = true;
-  btn.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div> שולח...';
+  btn.innerHTML = '<div class="spinner" style="width:14px;height:14px;border-width:2px"></div> שומר...';
 
   try {
-    const rating = document.querySelector('input[name="rating"]:checked')?.value || 3;
-    const hasDiscipline = document.getElementById('sum-discipline')?.checked;
-    const hasEquipment  = document.getElementById('sum-equipment')?.checked;
+    const number = parseInt(document.getElementById('lp-number').value);
+    const title  = document.getElementById('lp-title').value.trim();
+    const desc   = document.getElementById('lp-desc').value.trim();
+    const date   = document.getElementById('lp-date').value;
+    const video  = document.getElementById('lp-video').value.trim();
+    const file   = document.getElementById('lp-file').files[0];
 
-    // Upload photos
-    const photoUrls = [];
-    const photoFiles = document.getElementById('sum-photos')?.files;
-    if (photoFiles?.length) {
-      for (const file of photoFiles) {
-        const ref = storage.ref(`summaries/${Date.now()}_${file.name}`);
-        await ref.put(file);
-        photoUrls.push(await ref.getDownloadURL());
-      }
+    const data = {
+      number, title, description: desc, date, videoUrl: video,
+      createdBy: currentUserData?.uid,
+      createdByName: currentUserData?.name || '',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    // Upload file if provided
+    if (file) {
+      const ref = storage.ref(`lessonPlans/${Date.now()}_${file.name}`);
+      const snap = await ref.put(file);
+      data.fileUrl = await snap.ref.getDownloadURL();
+      data.fileName = file.name;
     }
 
-    await db.collection('summaries').add({
-      school:            document.getElementById('sum-school').value.trim(),
-      group:             document.getElementById('sum-group').value.trim(),
-      date:              document.getElementById('sum-date').value,
-      attendance:        parseInt(document.getElementById('sum-attendance').value) || 0,
-      rating:            parseInt(rating),
-      summary:           document.getElementById('sum-summary').value.trim(),
-      highlights:        document.getElementById('sum-highlights')?.value.trim() || '',
-      hasDiscipline,
-      disciplineDetails: hasDiscipline ? document.getElementById('sum-discipline-details')?.value.trim() : '',
-      hasEquipment,
-      equipmentDetails:  hasEquipment  ? document.getElementById('sum-equipment-details')?.value.trim() : '',
-      notes:             document.getElementById('sum-notes')?.value.trim() || '',
-      photos:            photoUrls,
-      coachUid:          currentUser.uid,
-      coachName:         currentUserData?.name || currentUser.email,
-      createdAt:         firebase.firestore.FieldValue.serverTimestamp(),
-    });
+    await db.collection('lessonPlans').add(data);
+    closeLessonPlanModal();
+    showToast('מערך השיעור נשמר בהצלחה', 'success');
+  } catch (err) {
+    console.error(err);
+    showToast('שגיאה בשמירת המערך: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-save"></i> שמור מערך שיעור';
+  }
+}
 
-    showToast('הסיכום נשלח בהצלחה!', 'success');
+async function deleteLessonPlan(id) {
+  if (!confirm('למחוק את מערך השיעור?')) return;
+  try {
+    await db.collection('lessonPlans').doc(id).delete();
+    showToast('המערך נמחק', 'info');
+  } catch (err) {
+    showToast('שגיאה במחיקה', 'error');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// SUMMARIES
+// ══════════════════════════════════════════════════════════════
+function loadSummaries() {
+  let query = db.collection('summaries').orderBy('createdAt', 'desc');
+  // Coaches only see their own summaries
+  if (currentUserData?.role === 'coach' || currentUserData?.role === 'coordinator') {
+    query = query.where('coachId', '==', currentUserData.uid);
+  }
+  const unsub = query.onSnapshot(renderSummaries, err => console.error('loadSummaries:', err));
+  unsubscribers.push(unsub);
+}
+
+function renderSummaries(snapshot) {
+  const list = document.getElementById('summaries-list');
+  if (!list) return;
+
+  if (snapshot.empty) {
+    list.innerHTML = '<div class="loading-center" style="color:var(--text-3)"><p>אין סיכומים עדיין</p></div>';
+    return;
+  }
+
+  list.innerHTML = snapshot.docs.map(doc => {
+    const d = doc.data();
+    const classes = ['summary-card'];
+    if (d.hasDiscipline) classes.push('discipline');
+    if (d.hasEquipment)  classes.push('equipment');
+
+    const tags = [];
+    if (d.hasDiscipline) tags.push('<span class="summary-tag discipline-tag"><i class="fas fa-exclamation-triangle"></i> משמעת</span>');
+    if (d.hasEquipment)  tags.push('<span class="summary-tag equipment-tag"><i class="fas fa-tools"></i> ציוד</span>');
+
+    const stars = '★'.repeat(d.rating || 3) + '☆'.repeat(5 - (d.rating || 3));
+
+    return `
+      <div class="${classes.join(' ')}" onclick="viewSummary('${doc.id}')">
+        <div class="summary-meta">
+          <span class="summary-school">${escHtml(d.school || '—')}</span>
+          <span class="summary-date">${formatDate(d.date)}</span>
+          <span class="summary-coach">${escHtml(d.coachName || '')}</span>
+          <span style="color:var(--warning);font-size:.8rem">${stars}</span>
+        </div>
+        <div class="summary-body">${escHtml(d.summary || '')}</div>
+        ${tags.length ? `<div class="summary-tags">${tags.join('')}</div>` : ''}
+      </div>`;
+  }).join('');
+
+  // Update recent-summaries in dashboard (latest 3)
+  const recentEl = document.getElementById('recent-summaries');
+  if (recentEl) {
+    const recent = snapshot.docs.slice(0, 3);
+    if (recent.length === 0) {
+      recentEl.innerHTML = '<p style="color:var(--text-3);font-size:.875rem">אין סיכומים עדיין</p>';
+    } else {
+      recentEl.innerHTML = recent.map(doc => {
+        const d = doc.data();
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-weight:600;font-size:.875rem">${escHtml(d.school || '—')}</div>
+            <div style="font-size:.78rem;color:var(--text-3)">${escHtml(d.coachName || '')} · ${formatDate(d.date)}</div>
+          </div>
+          ${d.hasDiscipline ? '<span class="summary-tag discipline-tag">משמעת</span>' : ''}
+          ${d.hasEquipment  ? '<span class="summary-tag equipment-tag">ציוד</span>'   : ''}
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // Update coach dashboard counter
+  const coachSumEl = document.getElementById('stat-coach-summaries');
+  if (coachSumEl) coachSumEl.textContent = snapshot.size;
+}
+
+async function submitSummary(e) {
+  e.preventDefault();
+  const btn = document.getElementById('submitSummaryBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="width:14px;height:14px;border-width:2px"></div> שולח...';
+
+  try {
+    const hasDiscipline = document.getElementById('sum-discipline').checked;
+    const hasEquipment  = document.getElementById('sum-equipment').checked;
+    const rating = parseInt(document.querySelector('input[name="rating"]:checked')?.value || '3');
+    const files  = document.getElementById('sum-photos').files;
+
+    const data = {
+      school:       document.getElementById('sum-school').value.trim(),
+      group:        document.getElementById('sum-group').value.trim(),
+      date:         document.getElementById('sum-date').value,
+      attendance:   parseInt(document.getElementById('sum-attendance').value) || 0,
+      rating,
+      summary:      document.getElementById('sum-summary').value.trim(),
+      highlights:   document.getElementById('sum-highlights').value.trim(),
+      hasDiscipline,
+      disciplineDetails: hasDiscipline ? document.getElementById('sum-discipline-details').value.trim() : '',
+      hasEquipment,
+      equipmentDetails:  hasEquipment  ? document.getElementById('sum-equipment-details').value.trim() : '',
+      notes:        document.getElementById('sum-notes').value.trim(),
+      coachId:      currentUserData?.uid,
+      coachName:    currentUserData?.name || '',
+      photos:       [],
+      createdAt:    firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    // Upload photos
+    if (files && files.length > 0) {
+      const urls = await Promise.all(Array.from(files).map(async file => {
+        const ref  = storage.ref(`summaries/${Date.now()}_${file.name}`);
+        const snap = await ref.put(file);
+        return snap.ref.getDownloadURL();
+      }));
+      data.photos = urls;
+    }
+
+    await db.collection('summaries').add(data);
     document.getElementById('summaryForm').reset();
     document.getElementById('photo-preview').style.display = 'none';
     document.getElementById('photo-preview').innerHTML = '';
+    document.getElementById('discipline-details-row').style.display = 'none';
+    document.getElementById('equipment-details-row').style.display  = 'none';
+    showToast('הסיכום נשלח בהצלחה!', 'success');
     navigateTo('summaries');
-  } catch (e) {
-    console.error(e);
-    showToast('שגיאה בשליחת הסיכום: ' + e.message, 'error');
+  } catch (err) {
+    console.error(err);
+    showToast('שגיאה בשליחת הסיכום: ' + err.message, 'error');
   } finally {
     btn.disabled = false;
     btn.innerHTML = '<i class="fas fa-paper-plane"></i> שלח סיכום למנהל';
   }
 }
 
-// ── Equipment ─────────────────────────────────────────────
-let allEquipment = [];
+async function viewSummary(id) {
+  const doc = await db.collection('summaries').doc(id).get();
+  if (!doc.exists) return;
+  const d = doc.data();
 
-function listenEquipment() {
-  db.collection('equipment').orderBy('createdAt', 'desc').onSnapshot(snap => {
-    allEquipment = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderEquipment();
-  }, err => console.error('equipment listener:', err));
+  const stars = '★'.repeat(d.rating || 3) + '☆'.repeat(5 - (d.rating || 3));
+  const photos = (d.photos || []).map(url =>
+    `<div class="photo-item"><img src="${url}" alt="תמונה"></div>`).join('');
+
+  document.getElementById('summaryModalContent').innerHTML = `
+    <div style="padding:4px 0 16px">
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px">
+        <div><span style="font-size:.75rem;color:var(--text-3)">בית ספר</span><div style="font-weight:700">${escHtml(d.school)}</div></div>
+        <div><span style="font-size:.75rem;color:var(--text-3)">קבוצה</span><div style="font-weight:700">${escHtml(d.group || '—')}</div></div>
+        <div><span style="font-size:.75rem;color:var(--text-3)">תאריך</span><div style="font-weight:700">${formatDate(d.date)}</div></div>
+        <div><span style="font-size:.75rem;color:var(--text-3)">מאמן</span><div style="font-weight:700;color:var(--primary-lighter)">${escHtml(d.coachName)}</div></div>
+        <div><span style="font-size:.75rem;color:var(--text-3)">דירוג</span><div style="color:var(--warning)">${stars}</div></div>
+        <div><span style="font-size:.75rem;color:var(--text-3)">משתתפים</span><div style="font-weight:700">${d.attendance || 0}</div></div>
+      </div>
+      <div class="section-block-title"><i class="fas fa-clipboard-check"></i> סיכום</div>
+      <p style="color:var(--text-2);line-height:1.7;margin-bottom:16px">${escHtml(d.summary || '')}</p>
+      ${d.highlights ? `<div class="section-block-title"><i class="fas fa-star"></i> הצלחות</div><p style="color:var(--text-2);line-height:1.7;margin-bottom:16px">${escHtml(d.highlights)}</p>` : ''}
+      ${d.hasDiscipline ? `<div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:12px;margin-bottom:12px"><b style="color:var(--warning)"><i class="fas fa-exclamation-triangle"></i> בעיות משמעת</b><p style="margin-top:6px;color:var(--text-2)">${escHtml(d.disciplineDetails || '—')}</p></div>` : ''}
+      ${d.hasEquipment  ? `<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:12px;margin-bottom:12px"><b style="color:var(--danger)"><i class="fas fa-tools"></i> בעיות ציוד</b><p style="margin-top:6px;color:var(--text-2)">${escHtml(d.equipmentDetails || '—')}</p></div>` : ''}
+      ${d.notes ? `<div class="section-block-title"><i class="fas fa-sticky-note"></i> הערות</div><p style="color:var(--text-2);line-height:1.7;margin-bottom:16px">${escHtml(d.notes)}</p>` : ''}
+      ${photos ? `<div class="section-block-title"><i class="fas fa-camera"></i> תמונות</div><div class="photo-grid" style="margin-top:8px">${photos}</div>` : ''}
+    </div>`;
+
+  document.getElementById('summaryModal').classList.add('show');
 }
 
-function renderEquipment() {
-  const tbody = document.getElementById('equipment-body');
-  if (!tbody) return;
-  if (!allEquipment.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:32px">אין פריטי ציוד עדיין</td></tr>';
+// ══════════════════════════════════════════════════════════════
+// SESSIONS (Calendar)
+// ══════════════════════════════════════════════════════════════
+function loadSessions() {
+  // Sessions are loaded into calendar when calendar is initialized
+  // Also update coach dashboard stats
+  let query = db.collection('sessions');
+  if (currentUserData?.role === 'coach' || currentUserData?.role === 'coordinator') {
+    query = query.where('coachId', '==', currentUserData.uid);
+  }
+
+  const unsub = query.onSnapshot(snapshot => {
+    // Update coach session stats
+    const today = new Date().toISOString().split('T')[0];
+    let todayCount = 0;
+    snapshot.forEach(doc => {
+      if (doc.data().date === today) todayCount++;
+    });
+
+    const todayEl   = document.getElementById('stat-coach-today');
+    const totalEl   = document.getElementById('stat-coach-sessions');
+    if (todayEl) todayEl.textContent = todayCount;
+    if (totalEl) totalEl.textContent = snapshot.size;
+
+    // Update today session info card
+    const todayInfo = document.getElementById('today-session-info');
+    if (todayInfo) {
+      const todaySessions = snapshot.docs.filter(d => d.data().date === today);
+      if (todaySessions.length > 0) {
+        todayInfo.innerHTML = todaySessions.map(doc => {
+          const d = doc.data();
+          return `<div class="card" style="border-right:4px solid var(--primary)">
+            <div class="card-title"><i class="fas fa-dumbbell"></i> אימון היום</div>
+            <div style="margin-top:8px;color:var(--text-2)">
+              <div><i class="fas fa-school"></i> ${escHtml(d.school || '')}</div>
+              <div><i class="fas fa-users"></i> ${escHtml(d.group || '')}</div>
+              ${d.startTime ? `<div><i class="fas fa-clock"></i> ${d.startTime}${d.endTime ? ' — ' + d.endTime : ''}</div>` : ''}
+            </div>
+          </div>`;
+        }).join('');
+      }
+    }
+  }, err => console.error('loadSessions:', err));
+
+  unsubscribers.push(unsub);
+}
+
+function openSessionModal() {
+  // Populate coach dropdown
+  const sel = document.getElementById('sess-coach');
+  if (sel) {
+    sel.innerHTML = '<option value="">טוען מאמנים...</option>';
+    db.collection('users').where('role', 'in', ['coach', 'coordinator']).get().then(snap => {
+      sel.innerHTML = '<option value="">בחר מאמן...</option>';
+      snap.forEach(doc => {
+        const d = doc.data();
+        const opt = document.createElement('option');
+        opt.value = doc.id;
+        opt.textContent = d.name || d.email;
+        opt.dataset.name = d.name || d.email;
+        sel.appendChild(opt);
+      });
+      // Pre-select current user if they are a coach
+      if (currentUserData?.role !== 'manager') {
+        sel.value = currentUserData?.uid || '';
+      }
+    });
+  }
+  document.getElementById('sessionModal').classList.add('show');
+}
+
+function closeSessionModal() {
+  document.getElementById('sessionModal').classList.remove('show');
+  document.getElementById('sessionForm')?.reset();
+}
+
+async function submitSession(e) {
+  e.preventDefault();
+  try {
+    const coachSel = document.getElementById('sess-coach');
+    const coachId  = coachSel.value;
+    const coachName = coachSel.options[coachSel.selectedIndex]?.dataset.name || '';
+    const date      = document.getElementById('sess-date').value;
+    const school    = document.getElementById('sess-school').value.trim();
+    const group     = document.getElementById('sess-group').value.trim();
+    const startTime = document.getElementById('sess-start').value;
+    const endTime   = document.getElementById('sess-end').value;
+    const notes     = document.getElementById('sess-notes').value.trim();
+
+    const data = {
+      coachId, coachName, date, school, group, startTime, endTime, notes,
+      createdBy: currentUserData?.uid,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    const ref = await db.collection('sessions').add(data);
+
+    // Add to calendar immediately
+    if (calendar) {
+      const start = date + (startTime ? 'T' + startTime : '');
+      const end   = date + (endTime   ? 'T' + endTime   : '');
+      calendar.addEvent({
+        id: ref.id,
+        title: `${coachName} — ${school}`,
+        start,
+        end: endTime ? end : undefined,
+        extendedProps: { school, coachName }
+      });
+    }
+
+    closeSessionModal();
+    showToast('האימון נוסף ללוח השנה', 'success');
+    navigateTo('calendar');
+  } catch (err) {
+    console.error(err);
+    showToast('שגיאה בהוספת האימון: ' + err.message, 'error');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// COACHES
+// ══════════════════════════════════════════════════════════════
+function loadCoaches() {
+  const unsub = db.collection('users')
+    .where('role', 'in', ['coach', 'coordinator', 'manager'])
+    .onSnapshot(renderCoaches, err => console.error('loadCoaches:', err));
+  unsubscribers.push(unsub);
+}
+
+function renderCoaches(snapshot) {
+  const grid = document.getElementById('coaches-grid');
+  if (!grid) return;
+
+  // Also populate session modal coach dropdown if it's open
+  const msgTo = document.getElementById('msg-to');
+  if (msgTo && msgTo.children.length <= 1) {
+    snapshot.forEach(doc => {
+      if (doc.id === currentUserData?.uid) return;
+      const opt = document.createElement('option');
+      opt.value = doc.id;
+      opt.textContent = doc.data().name || doc.data().email;
+      msgTo.appendChild(opt);
+    });
+  }
+
+  if (snapshot.empty) {
+    grid.innerHTML = '<div class="loading-center" style="color:var(--text-3)"><p>אין חברי צוות עדיין</p></div>';
     return;
   }
-  const statusMap = { good: ['תקין', 'var(--success)'], damaged: ['פגום', '#f5a623'], broken: ['מקולקל', 'var(--danger)'] };
-  tbody.innerHTML = allEquipment.map(eq => {
-    const [label, color] = statusMap[eq.status] || ['—', 'var(--text-3)'];
+
+  const roleMap  = { manager: 'מנהל', coach: 'מאמן', coordinator: 'רכז' };
+  const colorMap = ['#e63946','#3b82f6','#22c55e','#f59e0b','#8b5cf6','#ec4899'];
+
+  grid.innerHTML = `<div class="coaches-grid-layout">` +
+    snapshot.docs.map((doc, i) => {
+      const d = doc.data();
+      const initials = (d.name || d.email || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+      const color    = colorMap[i % colorMap.length];
+      const isManager = currentUserData?.role === 'manager';
+      return `
+        <div class="coach-card">
+          <div class="coach-avatar" style="background:${color}">${initials}</div>
+          <div class="coach-name">${escHtml(d.name || d.email || '—')}</div>
+          <div class="coach-role">${roleMap[d.role] || d.role || ''}</div>
+          ${d.school ? `<div class="coach-school"><i class="fas fa-school"></i> ${escHtml(d.school)}</div>` : ''}
+          ${d.phone  ? `<div class="coach-phone"><i class="fas fa-phone"></i> ${escHtml(d.phone)}</div>`   : ''}
+          ${isManager ? `<button class="btn-ghost btn-sm" style="margin-top:6px" onclick="deleteCoach('${doc.id}')"><i class="fas fa-trash" style="color:var(--danger)"></i></button>` : ''}
+        </div>`;
+    }).join('') + `</div>`;
+}
+
+function openCoachModal() {
+  document.getElementById('coachModal').classList.add('show');
+}
+
+function closeCoachModal() {
+  document.getElementById('coachModal').classList.remove('show');
+  document.getElementById('coachForm')?.reset();
+}
+
+async function submitCoach(e) {
+  e.preventDefault();
+  try {
+    const name   = document.getElementById('new-coach-name').value.trim();
+    const email  = document.getElementById('new-coach-email').value.trim();
+    const phone  = document.getElementById('new-coach-phone').value.trim();
+    const role   = document.getElementById('new-coach-role').value;
+    const school = document.getElementById('new-coach-school').value.trim();
+
+    // Check for duplicate email
+    const existing = await db.collection('users').where('email', '==', email).get();
+    if (!existing.empty) {
+      showToast('כתובת אימייל כבר קיימת במערכת', 'error');
+      return;
+    }
+
+    await db.collection('users').add({
+      name, email, phone, role, school,
+      createdBy: currentUserData?.uid,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    closeCoachModal();
+    showToast('חבר הצוות נוסף בהצלחה', 'success');
+  } catch (err) {
+    console.error(err);
+    showToast('שגיאה בהוספת חבר הצוות: ' + err.message, 'error');
+  }
+}
+
+async function deleteCoach(id) {
+  if (!confirm('למחוק את חבר הצוות?')) return;
+  try {
+    await db.collection('users').doc(id).delete();
+    showToast('חבר הצוות הוסר', 'info');
+  } catch (err) {
+    showToast('שגיאה במחיקה', 'error');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// EQUIPMENT
+// ══════════════════════════════════════════════════════════════
+function loadEquipment() {
+  const unsub = db.collection('equipment').orderBy('createdAt', 'desc')
+    .onSnapshot(renderEquipment, err => console.error('loadEquipment:', err));
+  unsubscribers.push(unsub);
+}
+
+function renderEquipment(snapshot) {
+  const tbody = document.getElementById('equipment-body');
+  if (!tbody) return;
+
+  if (snapshot.empty) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:24px">אין ציוד מדווח עדיין</td></tr>';
+    return;
+  }
+
+  const statusMap = { good: 'תקין', damaged: 'פגום', broken: 'מקולקל / לתיקון' };
+  const badgeMap  = { good: 'badge-good', damaged: 'badge-damaged', broken: 'badge-broken' };
+
+  tbody.innerHTML = snapshot.docs.map(doc => {
+    const d = doc.data();
     return `<tr>
-      <td><strong>${esc(eq.name || '—')}</strong></td>
-      <td>${esc(eq.school || '—')}</td>
-      <td>${eq.quantity || 1}</td>
-      <td><span style="color:${color};font-weight:600">${label}</span></td>
-      <td style="font-size:.85rem;color:var(--text-3)">${esc(eq.notes || '')}</td>
+      <td style="font-weight:600;color:var(--text-1)">${escHtml(d.name || '')}</td>
+      <td>${escHtml(d.school || '')}</td>
+      <td>${d.quantity || 1}</td>
+      <td><span class="badge ${badgeMap[d.status] || ''}">${statusMap[d.status] || d.status}</span></td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(d.notes || '—')}</td>
       <td>
-        <button class="btn-ghost btn-sm" onclick="deleteEquipment('${eq.id}')" title="מחק">
+        <button class="btn-ghost btn-sm" onclick="deleteEquipment('${doc.id}')">
           <i class="fas fa-trash" style="color:var(--danger)"></i>
         </button>
       </td>
@@ -380,575 +721,391 @@ function renderEquipment() {
   }).join('');
 }
 
+function openEquipmentModal() {
+  document.getElementById('equipmentModal').classList.add('show');
+}
+
+function closeEquipmentModal() {
+  document.getElementById('equipmentModal').classList.remove('show');
+  document.getElementById('equipmentForm')?.reset();
+}
+
+async function submitEquipment(e) {
+  e.preventDefault();
+  try {
+    const data = {
+      name:     document.getElementById('eq-name').value.trim(),
+      school:   document.getElementById('eq-school').value.trim(),
+      quantity: parseInt(document.getElementById('eq-quantity').value) || 1,
+      status:   document.getElementById('eq-status').value,
+      notes:    document.getElementById('eq-notes').value.trim(),
+      reportedBy:   currentUserData?.uid,
+      reportedName: currentUserData?.name || '',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    await db.collection('equipment').add(data);
+    closeEquipmentModal();
+    showToast('הציוד נוסף בהצלחה', 'success');
+  } catch (err) {
+    console.error(err);
+    showToast('שגיאה בשמירת הציוד: ' + err.message, 'error');
+  }
+}
+
 async function deleteEquipment(id) {
-  if (!confirm('האם למחוק פריט זה?')) return;
+  if (!confirm('למחוק את הציוד?')) return;
   try {
     await db.collection('equipment').doc(id).delete();
-    showToast('הפריט נמחק', 'info');
-  } catch (e) {
+    showToast('הציוד הוסר', 'info');
+  } catch (err) {
     showToast('שגיאה במחיקה', 'error');
   }
 }
 
-// ── Lesson Plans ──────────────────────────────────────────
-let allLessonPlans = [];
+// ══════════════════════════════════════════════════════════════
+// MESSAGES
+// ══════════════════════════════════════════════════════════════
+function loadMessages() {
+  if (!currentUserData?.uid) return;
 
-function listenLessonPlans() {
-  db.collection('lessonPlans').orderBy('number', 'asc').onSnapshot(snap => {
-    allLessonPlans = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderLessonPlans();
-  }, err => console.error('lessonPlans listener:', err));
-}
+  // Load threads where current user is a participant
+  const unsub = db.collection('messageThreads')
+    .where('participants', 'array-contains', currentUserData.uid)
+    .orderBy('lastAt', 'desc')
+    .onSnapshot(snapshot => {
+      const list = document.getElementById('message-list');
+      if (!list) return;
 
-function renderLessonPlans() {
-  const list = document.getElementById('lesson-plans-list');
-  if (!list) return;
-  if (!allLessonPlans.length) {
-    list.innerHTML = '<p style="color:var(--text-3);padding:24px;text-align:center">אין מערכי שיעור עדיין</p>';
-    return;
-  }
-  list.innerHTML = allLessonPlans.map(lp => `
-    <div class="lesson-plan-card">
-      <div style="display:flex;align-items:flex-start;gap:16px">
-        <div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,var(--primary),var(--primary-lighter));display:flex;align-items:center;justify-content:center;font-size:1.1rem;font-weight:900;color:white;flex-shrink:0">
-          ${lp.number || '?'}
-        </div>
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:700;font-size:1rem;margin-bottom:4px">${esc(lp.title || '—')}</div>
-          <div style="font-size:.8rem;color:var(--text-3);margin-bottom:8px">${lp.date || ''}</div>
-          ${lp.description ? `<div style="font-size:.875rem;color:var(--text-2);margin-bottom:8px">${esc(lp.description)}</div>` : ''}
-          <div style="display:flex;gap:10px;flex-wrap:wrap">
-            ${lp.videoUrl ? `<a href="${lp.videoUrl}" target="_blank" rel="noopener" class="btn-ghost btn-sm" style="text-decoration:none"><i class="fab fa-youtube" style="color:#ff0000"></i> צפה בסרטון</a>` : ''}
-            ${lp.fileUrl  ? `<a href="${lp.fileUrl}"  target="_blank" rel="noopener" class="btn-ghost btn-sm" style="text-decoration:none"><i class="fas fa-file-pdf" style="color:var(--primary-lighter)"></i> הורד קובץ</a>` : ''}
-          </div>
-        </div>
-        ${currentUserData?.role === 'manager' ? `
-        <button class="btn-ghost btn-sm" onclick="deleteLessonPlan('${lp.id}')" title="מחק">
-          <i class="fas fa-trash" style="color:var(--danger)"></i>
-        </button>` : ''}
-      </div>
-    </div>
-  `).join('');
-}
-
-async function deleteLessonPlan(id) {
-  if (!confirm('האם למחוק מערך שיעור זה?')) return;
-  try {
-    await db.collection('lessonPlans').doc(id).delete();
-    showToast('מערך השיעור נמחק', 'info');
-  } catch (e) {
-    showToast('שגיאה במחיקה', 'error');
-  }
-}
-
-// ── Gallery ───────────────────────────────────────────────
-let galleryLoaded = false;
-
-function renderGallery() {
-  if (galleryLoaded) return;
-  galleryLoaded = true;
-  const grid = document.getElementById('gallery-grid');
-  if (!grid) return;
-  grid.innerHTML = '<div class="loading-center"><div class="spinner"></div></div>';
-  db.collection('gallery').orderBy('createdAt', 'desc').limit(50).get().then(snap => {
-    if (snap.empty) {
-      grid.innerHTML = '<p style="color:var(--text-3);padding:24px;text-align:center;width:100%">אין תמונות עדיין</p>';
-      return;
-    }
-    grid.innerHTML = snap.docs.map(d => {
-      const data = d.data();
-      return `<div class="photo-item">
-        <img src="${data.url}" alt="${esc(data.name || '')}" loading="lazy"
-             onclick="window.open('${data.url}','_blank')" style="cursor:pointer">
-      </div>`;
-    }).join('');
-  }).catch(e => {
-    grid.innerHTML = '<p style="color:var(--danger);padding:24px">שגיאה בטעינת הגלריה</p>';
-    console.error(e);
-  });
-}
-
-async function uploadGalleryPhotos(input) {
-  if (!input.files?.length) return;
-  const grid = document.getElementById('gallery-grid');
-  showToast('מעלה תמונות...', 'info');
-  try {
-    for (const file of input.files) {
-      const ref = storage.ref(`gallery/${Date.now()}_${file.name}`);
-      await ref.put(file);
-      const url = await ref.getDownloadURL();
-      await db.collection('gallery').add({
-        url,
-        name:       file.name,
-        uploadedBy: currentUser.uid,
-        createdAt:  firebase.firestore.FieldValue.serverTimestamp(),
-      });
-      if (grid) {
-        const div = document.createElement('div');
-        div.className = 'photo-item';
-        div.innerHTML = `<img src="${url}" alt="${esc(file.name)}" loading="lazy"
-          onclick="window.open('${url}','_blank')" style="cursor:pointer">`;
-        grid.prepend(div);
+      if (snapshot.empty) {
+        list.innerHTML = '<div style="padding:16px;color:var(--text-3);font-size:.875rem;text-align:center">אין שיחות עדיין</div>';
+        return;
       }
-    }
-    galleryLoaded = false; // allow refresh
-    showToast(`${input.files.length} תמונות הועלו בהצלחה!`, 'success');
-    input.value = '';
-    // Remove empty state
-    const empty = grid?.querySelector('p');
-    if (empty) empty.remove();
-  } catch (e) {
-    showToast('שגיאה בהעלאת תמונות: ' + e.message, 'error');
-  }
-}
 
-// ── Sessions / Calendar ───────────────────────────────────
-let allSessions = [];
+      let unreadCount = 0;
+      list.innerHTML = snapshot.docs.map(doc => {
+        const d = doc.data();
+        const otherName = d.participantNames?.find(n => n !== currentUserData.name) || '—';
+        const isActive  = currentThreadId === doc.id ? ' active' : '';
+        const unread    = (d.unreadFor || []).includes(currentUserData.uid);
+        if (unread) unreadCount++;
+        return `
+          <div class="message-thread-item${isActive}" onclick="openThread('${doc.id}', '${escHtml(otherName)}')">
+            <div class="thread-name">${escHtml(otherName)}${unread ? ' <span style="width:7px;height:7px;background:var(--primary);border-radius:50%;display:inline-block"></span>' : ''}</div>
+            <div class="thread-preview">${escHtml((d.lastMessage || '').slice(0, 50))}</div>
+          </div>`;
+      }).join('');
 
-function listenSessions() {
-  db.collection('sessions').orderBy('date', 'asc').onSnapshot(snap => {
-    allSessions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if (calendarInstance) {
-      calendarInstance.removeAllEvents();
-      calendarInstance.addEventSource(sessionsToEvents());
-    }
-    updateSessionStats();
-    updateCoachTodaySessions();
-  }, err => console.error('sessions listener:', err));
-}
+      // Update badge
+      const badge = document.getElementById('msg-badge');
+      if (badge) {
+        if (unreadCount > 0) {
+          badge.textContent = unreadCount;
+          badge.style.display = 'inline-block';
+        } else {
+          badge.style.display = 'none';
+        }
+      }
+    }, err => console.error('loadMessages:', err));
 
-function sessionsToEvents() {
-  return allSessions.map(s => ({
-    id:    s.id,
-    title: `${s.school || ''} ${s.group ? '— ' + s.group : ''}`,
-    start: s.startTime ? `${s.date}T${s.startTime}` : s.date,
-    end:   s.endTime   ? `${s.date}T${s.endTime}`   : undefined,
-    extendedProps: s,
-    color: '#e63946',
-  }));
-}
+  unsubscribers.push(unsub);
 
-function initCalendar() {
-  const el = document.getElementById('calendar');
-  if (!el || calendarInstance) return;
-  calendarInstance = new FullCalendar.Calendar(el, {
-    locale:         'he',
-    direction:      'rtl',
-    initialView:    'dayGridMonth',
-    headerToolbar: {
-      start:  'prev,next today',
-      center: 'title',
-      end:    'dayGridMonth,timeGridWeek,timeGridDay',
-    },
-    events:         sessionsToEvents(),
-    eventClick: ({ event }) => {
-      const s = event.extendedProps;
-      const timeStr = s.startTime ? ` | ${s.startTime}${s.endTime ? '–' + s.endTime : ''}` : '';
-      alert(`${event.title}\nתאריך: ${s.date}${timeStr}\nמאמן: ${s.coachName || '—'}\n${s.notes ? 'הערות: ' + s.notes : ''}`);
-    },
-    height: 'auto',
-    buttonText: { today: 'היום', month: 'חודש', week: 'שבוע', day: 'יום' },
+  // Populate message recipient dropdown
+  db.collection('users').get().then(snap => {
+    const sel = document.getElementById('msg-to');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">בחר נמען...</option>';
+    snap.forEach(doc => {
+      if (doc.id === currentUserData.uid) return;
+      const opt = document.createElement('option');
+      opt.value = doc.id;
+      opt.dataset.name = doc.data().name || doc.data().email;
+      opt.textContent  = doc.data().name || doc.data().email;
+      sel.appendChild(opt);
+    });
   });
-  calendarInstance.render();
 }
 
-// ── Messages ─────────────────────────────────────────────
-let conversations       = [];
-let messagesUnsubscribe = null;
+function openThread(threadId, otherName) {
+  currentThreadId = threadId;
 
-function listenMessages() {
-  db.collection('conversations')
-    .where('participants', 'array-contains', currentUser.uid)
-    .orderBy('updatedAt', 'desc')
-    .onSnapshot(snap => {
-      conversations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      renderConversationList();
-      updateMessageBadge();
-    }, err => console.error('messages listener:', err));
-}
+  // Update thread list active state
+  document.querySelectorAll('.message-thread-item').forEach(el => el.classList.remove('active'));
+  event?.currentTarget?.classList.add('active');
 
-function renderConversationList() {
-  const list = document.getElementById('message-list');
-  if (!list) return;
-  if (!conversations.length) {
-    list.innerHTML = '<p style="color:var(--text-3);padding:16px;font-size:.85rem">אין שיחות עדיין</p>';
-    return;
-  }
-  list.innerHTML = conversations.map(c => {
-    const otherUid  = c.participants?.find(p => p !== currentUser.uid);
-    const otherName = c.participantNames?.[otherUid] || 'לא ידוע';
-    const unread    = c.unread?.[currentUser.uid] || 0;
-    const last      = c.lastMessage || '';
-    return `<div class="conv-item ${activeConversationId === c.id ? 'active' : ''}"
-         onclick="openConversation('${c.id}','${esc(otherName)}','${otherUid}')"
-         style="padding:14px 16px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;
-                ${activeConversationId === c.id ? 'background:rgba(230,57,70,.1)' : ''}">
-      <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary-lighter));display:flex;align-items:center;justify-content:center;font-weight:700;color:white;flex-shrink:0">
-        ${otherName.charAt(0).toUpperCase()}
-      </div>
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:700;font-size:.9rem">${esc(otherName)}</div>
-        <div style="font-size:.78rem;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(last)}</div>
-      </div>
-      ${unread > 0 ? `<span style="background:var(--primary);color:white;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700">${unread}</span>` : ''}
-    </div>`;
-  }).join('');
-}
+  const chatPanel = document.getElementById('chat-panel');
+  const chatEmpty = document.getElementById('chat-empty');
+  if (chatPanel) { chatPanel.style.display = 'flex'; }
+  if (chatEmpty) { chatEmpty.style.display = 'none'; }
 
-function updateMessageBadge() {
-  const total = conversations.reduce((sum, c) => sum + (c.unread?.[currentUser.uid] || 0), 0);
-  const badge = document.getElementById('msg-badge');
-  if (badge) {
-    badge.textContent = total;
-    badge.style.display = total > 0 ? '' : 'none';
-  }
-}
-
-function openConversation(convId, otherName, otherUid) {
-  activeConversationId = convId;
-  renderConversationList();
-
-  const panel = document.getElementById('chat-panel');
-  const empty = document.getElementById('chat-empty');
   const header = document.getElementById('chat-header-name');
-  if (panel)  { panel.style.display = 'flex'; }
-  if (empty)  { empty.style.display = 'none'; }
-  if (header) { header.textContent = otherName; }
+  if (header) header.textContent = otherName;
 
   // Mark as read
-  db.collection('conversations').doc(convId).update({
-    [`unread.${currentUser.uid}`]: 0,
+  db.collection('messageThreads').doc(threadId).update({
+    unreadFor: firebase.firestore.FieldValue.arrayRemove(currentUserData.uid)
   }).catch(() => {});
 
-  // Listen to messages in this conversation
-  if (messagesUnsubscribe) messagesUnsubscribe();
-  messagesUnsubscribe = db.collection('conversations').doc(convId)
-    .collection('messages').orderBy('createdAt', 'asc')
-    .onSnapshot(snap => {
+  // Load messages in thread
+  db.collection('messageThreads').doc(threadId).collection('messages')
+    .orderBy('sentAt', 'asc').onSnapshot(snapshot => {
       const thread = document.getElementById('messages-thread');
       if (!thread) return;
-      thread.innerHTML = snap.docs.map(d => {
-        const m    = d.data();
-        const mine = m.senderUid === currentUser.uid;
-        const time = m.createdAt?.toDate ? m.createdAt.toDate().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) : '';
-        return `<div style="display:flex;justify-content:${mine ? 'flex-start' : 'flex-end'};margin-bottom:10px">
-          <div style="max-width:70%;background:${mine ? 'var(--bg-2)' : 'var(--primary)'};padding:10px 14px;border-radius:${mine ? '4px 16px 16px 16px' : '16px 4px 16px 16px'};font-size:.9rem">
-            <p style="margin:0">${esc(m.text || '')}</p>
-            <span style="font-size:.68rem;opacity:.6;display:block;margin-top:4px;text-align:${mine ? 'right' : 'left'}">${time}</span>
-          </div>
+      thread.innerHTML = snapshot.docs.map(doc => {
+        const d = doc.data();
+        const isSent = d.senderId === currentUserData.uid;
+        return `<div class="message-bubble ${isSent ? 'sent' : 'received'}">
+          <div>${escHtml(d.text || '')}</div>
+          <div style="font-size:.68rem;color:${isSent ? 'rgba(255,255,255,.5)' : 'var(--text-3)'};margin-top:4px;text-align:${isSent ? 'left' : 'right'}">${formatTimestamp(d.sentAt)}</div>
         </div>`;
       }).join('');
       thread.scrollTop = thread.scrollHeight;
     });
 }
 
+function openNewMessageModal() {
+  document.getElementById('newMessageModal').classList.add('show');
+}
+
+function closeNewMessageModal() {
+  document.getElementById('newMessageModal').classList.remove('show');
+  document.getElementById('newMessageForm')?.reset();
+}
+
+async function submitNewMessage(e) {
+  e.preventDefault();
+  try {
+    const toSel  = document.getElementById('msg-to');
+    const toId   = toSel.value;
+    const toName = toSel.options[toSel.selectedIndex]?.dataset.name || '';
+    const text   = document.getElementById('msg-first-content').value.trim();
+
+    if (!toId || !text) return;
+
+    // Check if thread already exists
+    const existing = await db.collection('messageThreads')
+      .where('participants', 'array-contains', currentUserData.uid)
+      .get();
+
+    let threadId = null;
+    existing.forEach(doc => {
+      const d = doc.data();
+      if (d.participants.includes(toId)) threadId = doc.id;
+    });
+
+    const now = firebase.firestore.FieldValue.serverTimestamp();
+
+    if (!threadId) {
+      const ref = await db.collection('messageThreads').add({
+        participants:     [currentUserData.uid, toId],
+        participantNames: [currentUserData.name || '', toName],
+        lastMessage:      text,
+        lastAt:           now,
+        unreadFor:        [toId]
+      });
+      threadId = ref.id;
+    } else {
+      await db.collection('messageThreads').doc(threadId).update({
+        lastMessage: text,
+        lastAt: now,
+        unreadFor: firebase.firestore.FieldValue.arrayUnion(toId)
+      });
+    }
+
+    await db.collection('messageThreads').doc(threadId).collection('messages').add({
+      text,
+      senderId: currentUserData.uid,
+      senderName: currentUserData.name || '',
+      sentAt: now
+    });
+
+    closeNewMessageModal();
+    showToast('ההודעה נשלחה', 'success');
+    openThread(threadId, toName);
+  } catch (err) {
+    console.error(err);
+    showToast('שגיאה בשליחת ההודעה: ' + err.message, 'error');
+  }
+}
+
 async function sendMessage() {
   const input = document.getElementById('msg-input');
-  const text  = input?.value.trim();
-  if (!text || !activeConversationId) return;
-  input.value = '';
+  const text  = input?.value?.trim();
+  if (!text || !currentThreadId) return;
 
   try {
-    await db.collection('conversations').doc(activeConversationId)
-      .collection('messages').add({
-        text,
-        senderUid:  currentUser.uid,
-        senderName: currentUserData?.name || currentUser.email,
-        createdAt:  firebase.firestore.FieldValue.serverTimestamp(),
-      });
+    const now = firebase.firestore.FieldValue.serverTimestamp();
 
-    // Update conversation metadata
-    const conv = conversations.find(c => c.id === activeConversationId);
-    const otherUid = conv?.participants?.find(p => p !== currentUser.uid);
-    const update = {
+    // Get the other participant to mark as unread
+    const threadDoc = await db.collection('messageThreads').doc(currentThreadId).get();
+    const otherIds  = (threadDoc.data()?.participants || []).filter(id => id !== currentUserData.uid);
+
+    await db.collection('messageThreads').doc(currentThreadId).collection('messages').add({
+      text,
+      senderId: currentUserData.uid,
+      senderName: currentUserData.name || '',
+      sentAt: now
+    });
+
+    await db.collection('messageThreads').doc(currentThreadId).update({
       lastMessage: text,
-      updatedAt:   firebase.firestore.FieldValue.serverTimestamp(),
-    };
-    if (otherUid) update[`unread.${otherUid}`] = firebase.firestore.FieldValue.increment(1);
-    await db.collection('conversations').doc(activeConversationId).update(update);
-  } catch (e) {
-    showToast('שגיאה בשליחת הודעה', 'error');
+      lastAt: now,
+      unreadFor: firebase.firestore.FieldValue.arrayUnion(...otherIds)
+    });
+
+    input.value = '';
+  } catch (err) {
+    showToast('שגיאה בשליחת ההודעה', 'error');
   }
 }
 
-// Enter key to send
-document.getElementById('msg-input')?.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+// Allow Enter key to send
+document.getElementById('msg-input')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
 });
 
-function renderMessages() {
-  // Called when messages section is navigated to — list already live via listener
+// ══════════════════════════════════════════════════════════════
+// GALLERY
+// ══════════════════════════════════════════════════════════════
+function loadGallery() {
+  const unsub = db.collection('gallery').orderBy('uploadedAt', 'desc')
+    .onSnapshot(snapshot => {
+      const grid = document.getElementById('gallery-grid');
+      if (!grid) return;
+      if (snapshot.empty) {
+        grid.innerHTML = '<div style="color:var(--text-3);text-align:center;padding:40px">אין תמונות עדיין — העלה תמונות מהאימונים!</div>';
+        return;
+      }
+      grid.innerHTML = snapshot.docs.map(doc => {
+        const d = doc.data();
+        return `<div class="photo-item">
+          <img src="${d.url}" alt="${escHtml(d.name || '')}" loading="lazy"
+               onclick="window.open('${d.url}','_blank')">
+        </div>`;
+      }).join('');
+    }, err => console.error('loadGallery:', err));
+  unsubscribers.push(unsub);
 }
 
-// ── Modal helpers ─────────────────────────────────────────
-function openModal(id)  { document.getElementById(id)?.classList.add('show'); }
-function closeModal(id) { document.getElementById(id)?.classList.remove('show'); }
+async function uploadGalleryPhotos(input) {
+  const files = input.files;
+  if (!files || files.length === 0) return;
 
-// Close modal on overlay click
-document.querySelectorAll('.modal-overlay').forEach(overlay => {
-  overlay.addEventListener('click', e => {
-    if (e.target === overlay) overlay.classList.remove('show');
-  });
-});
+  const btn = document.getElementById('gallery-upload-btn');
+  if (btn) { btn.innerHTML = '<div class="spinner" style="width:14px;height:14px;border-width:2px"></div> מעלה...'; }
 
-// Lesson Plan Modal
-function openLessonPlanModal()  { openModal('lessonPlanModal'); }
-function closeLessonPlanModal() { closeModal('lessonPlanModal'); document.getElementById('lessonPlanForm')?.reset(); }
-
-async function submitLessonPlan(event) {
-  event.preventDefault();
-  const btn = document.getElementById('submitLessonPlanBtn');
-  btn.disabled = true;
-  btn.innerHTML = '<div class="spinner" style="width:14px;height:14px;border-width:2px"></div> שומר...';
   try {
-    let fileUrl = '';
-    const fileEl = document.getElementById('lp-file');
-    if (fileEl?.files[0]) {
-      const ref = storage.ref(`lessonPlans/${Date.now()}_${fileEl.files[0].name}`);
-      await ref.put(fileEl.files[0]);
-      fileUrl = await ref.getDownloadURL();
-    }
-    await db.collection('lessonPlans').add({
-      number:      parseInt(document.getElementById('lp-number').value),
-      date:        document.getElementById('lp-date').value,
-      title:       document.getElementById('lp-title').value.trim(),
-      description: document.getElementById('lp-desc')?.value.trim() || '',
-      videoUrl:    document.getElementById('lp-video')?.value.trim() || '',
-      fileUrl,
-      createdBy:   currentUser.uid,
-      createdAt:   firebase.firestore.FieldValue.serverTimestamp(),
-    });
-    showToast('מערך השיעור נשמר!', 'success');
-    closeLessonPlanModal();
-  } catch (e) {
-    showToast('שגיאה: ' + e.message, 'error');
+    await Promise.all(Array.from(files).map(async file => {
+      const ref  = storage.ref(`gallery/${Date.now()}_${file.name}`);
+      const snap = await ref.put(file);
+      const url  = await snap.ref.getDownloadURL();
+      await db.collection('gallery').add({
+        url,
+        name: file.name,
+        uploadedBy:   currentUserData?.uid,
+        uploadedName: currentUserData?.name || '',
+        uploadedAt:   firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }));
+    showToast(`${files.length} תמונות הועלו בהצלחה`, 'success');
+  } catch (err) {
+    console.error(err);
+    showToast('שגיאה בהעלאת התמונות: ' + err.message, 'error');
   } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fas fa-save"></i> שמור מערך שיעור';
+    if (btn) btn.innerHTML = '<i class="fas fa-upload"></i> העלה תמונות';
+    input.value = '';
   }
 }
 
-// Session Modal
-function openSessionModal() {
-  populateCoachSelects();
-  openModal('sessionModal');
-}
-function closeSessionModal() { closeModal('sessionModal'); document.getElementById('sessionForm')?.reset(); }
-
-async function submitSession(event) {
-  event.preventDefault();
-  try {
-    const coachId   = document.getElementById('sess-coach').value;
-    const coachData = allCoaches.find(c => c.id === coachId);
-    await db.collection('sessions').add({
-      coachUid:   coachId,
-      coachName:  coachData?.name || coachData?.email || '—',
-      school:     document.getElementById('sess-school').value.trim(),
-      group:      document.getElementById('sess-group')?.value.trim() || '',
-      date:       document.getElementById('sess-date').value,
-      startTime:  document.getElementById('sess-start')?.value || '',
-      endTime:    document.getElementById('sess-end')?.value || '',
-      notes:      document.getElementById('sess-notes')?.value.trim() || '',
-      createdAt:  firebase.firestore.FieldValue.serverTimestamp(),
-    });
-    showToast('האימון נוסף ללוח!', 'success');
-    closeSessionModal();
-  } catch (e) {
-    showToast('שגיאה: ' + e.message, 'error');
-  }
-}
-
-// Coach Modal
-function openCoachModal()  { openModal('coachModal'); }
-function closeCoachModal() { closeModal('coachModal'); document.getElementById('coachForm')?.reset(); }
-
-async function submitCoach(event) {
-  event.preventDefault();
-  try {
-    await db.collection('users').add({
-      name:      document.getElementById('new-coach-name').value.trim(),
-      phone:     document.getElementById('new-coach-phone')?.value.trim() || '',
-      email:     document.getElementById('new-coach-email').value.trim(),
-      role:      document.getElementById('new-coach-role').value,
-      school:    document.getElementById('new-coach-school')?.value.trim() || '',
-      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-    });
-    showToast('חבר הצוות נוסף!', 'success');
-    closeCoachModal();
-  } catch (e) {
-    showToast('שגיאה: ' + e.message, 'error');
-  }
-}
-
-// Equipment Modal
-function openEquipmentModal()  { openModal('equipmentModal'); }
-function closeEquipmentModal() { closeModal('equipmentModal'); document.getElementById('equipmentForm')?.reset(); }
-
-async function submitEquipment(event) {
-  event.preventDefault();
-  try {
-    await db.collection('equipment').add({
-      name:      document.getElementById('eq-name').value.trim(),
-      school:    document.getElementById('eq-school').value.trim(),
-      quantity:  parseInt(document.getElementById('eq-quantity').value) || 1,
-      status:    document.getElementById('eq-status').value,
-      notes:     document.getElementById('eq-notes')?.value.trim() || '',
-      reportedBy: currentUser.uid,
-      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-    });
-    showToast('הציוד דווח!', 'success');
-    closeEquipmentModal();
-  } catch (e) {
-    showToast('שגיאה: ' + e.message, 'error');
-  }
-}
-
-// New Message Modal
-function openNewMessageModal() {
-  populateCoachSelects();
-  openModal('newMessageModal');
-}
-function closeNewMessageModal() { closeModal('newMessageModal'); document.getElementById('newMessageForm')?.reset(); }
-
-async function submitNewMessage(event) {
-  event.preventDefault();
-  const toUid    = document.getElementById('msg-to').value;
-  const content  = document.getElementById('msg-first-content').value.trim();
-  if (!toUid || !content) return;
-
-  try {
-    const toUser = allCoaches.find(c => c.id === toUid);
-    // Check if conversation already exists
-    let convId = null;
-    const existing = conversations.find(c =>
-      c.participants?.includes(currentUser.uid) && c.participants?.includes(toUid)
-    );
-    if (existing) {
-      convId = existing.id;
-    } else {
-      const ref = await db.collection('conversations').add({
-        participants: [currentUser.uid, toUid],
-        participantNames: {
-          [currentUser.uid]: currentUserData?.name || currentUser.email,
-          [toUid]: toUser?.name || toUser?.email || 'לא ידוע',
-        },
-        lastMessage: content,
-        updatedAt:   firebase.firestore.FieldValue.serverTimestamp(),
-        unread: { [toUid]: 1 },
-      });
-      convId = ref.id;
-    }
-
-    await db.collection('conversations').doc(convId).collection('messages').add({
-      text:       content,
-      senderUid:  currentUser.uid,
-      senderName: currentUserData?.name || currentUser.email,
-      createdAt:  firebase.firestore.FieldValue.serverTimestamp(),
-    });
-
-    if (existing) {
-      await db.collection('conversations').doc(convId).update({
-        lastMessage: content,
-        updatedAt:   firebase.firestore.FieldValue.serverTimestamp(),
-        [`unread.${toUid}`]: firebase.firestore.FieldValue.increment(1),
-      });
-    }
-
-    showToast('ההודעה נשלחה!', 'success');
-    closeNewMessageModal();
-    navigateTo('messages');
-    setTimeout(() => openConversation(convId, toUser?.name || 'לא ידוע', toUid), 400);
-  } catch (e) {
-    showToast('שגיאה בשליחת הודעה: ' + e.message, 'error');
-  }
-}
-
-// ── Stats & dashboard helpers ─────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// DASHBOARD STATS
+// ══════════════════════════════════════════════════════════════
 function loadDashboardStats() {
-  // Coaches count
-  db.collection('users').where('role', 'in', ['coach', 'coordinator']).get().then(snap => {
-    const el = document.getElementById('stat-coaches');
-    if (el) el.textContent = snap.size;
-  });
-}
-
-function updateSessionStats() {
-  // Sessions this week
-  const now      = new Date();
-  const startOfWeek = new Date(now);
-  startOfWeek.setDate(now.getDate() - now.getDay());
-  const endOfWeek = new Date(startOfWeek);
-  endOfWeek.setDate(startOfWeek.getDate() + 6);
-
-  const fmt = d => d.toISOString().split('T')[0];
-  const thisWeek = allSessions.filter(s => s.date >= fmt(startOfWeek) && s.date <= fmt(endOfWeek));
-  const el = document.getElementById('stat-sessions');
-  if (el) el.textContent = thisWeek.length;
-}
-
-function updateCoachStats() {
-  // Summaries stat
-  const sumEl = document.getElementById('stat-summaries');
-  if (sumEl) {
-    const since = new Date();
-    since.setDate(since.getDate() - 7);
-    const recent = allSummaries.filter(s => {
-      const ts = s.createdAt?.toDate ? s.createdAt.toDate() : null;
-      return ts && ts >= since;
+  // Active coaches count
+  db.collection('users').where('role', 'in', ['coach', 'coordinator'])
+    .onSnapshot(snap => {
+      const el = document.getElementById('stat-coaches');
+      if (el) el.textContent = snap.size;
     });
-    sumEl.textContent = recent.length;
-  }
 
-  // Equipment issues
-  const eqEl = document.getElementById('stat-equipment');
-  if (eqEl) {
-    eqEl.textContent = allEquipment.filter(e => e.status !== 'good').length;
-  }
+  // Sessions this week
+  const weekAgo = new Date();
+  weekAgo.setDate(weekAgo.getDate() - 7);
+  const weekAgoStr = weekAgo.toISOString().split('T')[0];
+  db.collection('sessions').where('date', '>=', weekAgoStr)
+    .onSnapshot(snap => {
+      const el = document.getElementById('stat-sessions');
+      if (el) el.textContent = snap.size;
+    });
 
-  // Coach-specific stats
-  const coachSumEl = document.getElementById('stat-coach-summaries');
-  if (coachSumEl) coachSumEl.textContent = allSummaries.length;
+  // New summaries (last 7 days)
+  db.collection('summaries').where('date', '>=', weekAgoStr)
+    .onSnapshot(snap => {
+      const el = document.getElementById('stat-summaries');
+      if (el) el.textContent = snap.size;
+    });
+
+  // Open equipment issues (damaged or broken)
+  db.collection('equipment').where('status', 'in', ['damaged', 'broken'])
+    .onSnapshot(snap => {
+      const el = document.getElementById('stat-equipment');
+      if (el) el.textContent = snap.size;
+    });
 }
 
-function updateCoachTodaySessions() {
-  const today = new Date().toISOString().split('T')[0];
-  const todays = allSessions.filter(s => s.date === today && s.coachUid === currentUser?.uid);
-  const el = document.getElementById('stat-coach-today');
-  if (el) el.textContent = todays.length;
-  const totalEl = document.getElementById('stat-coach-sessions');
-  if (totalEl) totalEl.textContent = allSessions.filter(s => s.coachUid === currentUser?.uid).length;
-
-  // Today session info card
-  const infoEl = document.getElementById('today-session-info');
-  if (infoEl && todays.length) {
-    infoEl.innerHTML = todays.map(s => `
-      <div class="card" style="border-right:4px solid var(--primary)">
-        <div class="card-title"><i class="fas fa-dumbbell" style="color:var(--primary-lighter)"></i> אימון היום</div>
-        <div style="margin-top:12px">
-          <div><strong>${esc(s.school)}</strong>${s.group ? ' — ' + esc(s.group) : ''}</div>
-          ${s.startTime ? `<div style="color:var(--text-3);margin-top:4px"><i class="fas fa-clock"></i> ${s.startTime}${s.endTime ? '–' + s.endTime : ''}</div>` : ''}
-        </div>
-      </div>`).join('');
-  }
-}
-
-// ── Toggle discipline / equipment details ──────────────────
-document.getElementById('sum-discipline')?.addEventListener('change', function() {
-  const row = document.getElementById('discipline-details-row');
-  if (row) row.style.display = this.checked ? 'block' : 'none';
-});
-
-document.getElementById('sum-equipment')?.addEventListener('change', function() {
-  const row = document.getElementById('equipment-details-row');
-  if (row) row.style.display = this.checked ? 'block' : 'none';
-});
-
-// ── Utility ───────────────────────────────────────────────
-function esc(str) {
+// ══════════════════════════════════════════════════════════════
+// UTILS
+// ══════════════════════════════════════════════════════════════
+function escHtml(str) {
   if (!str) return '';
   return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
+
+function formatDate(dateStr) {
+  if (!dateStr) return '—';
+  try {
+    const [y, m, d] = dateStr.split('-');
+    return `${d}/${m}/${y}`;
+  } catch { return dateStr; }
+}
+
+function formatTimestamp(ts) {
+  if (!ts) return '';
+  try {
+    const date = ts.toDate ? ts.toDate() : new Date(ts);
+    return date.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  } catch { return ''; }
+}
+
+// Close modals on overlay click
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      overlay.classList.remove('show');
+    }
+  });
+});
+
+// ── DOMContentLoaded ─────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  // Initialize calendar
+  initCalendar();
+
+  // Toggle discipline details
+  document.getElementById('sum-discipline')?.addEventListener('change', function () {
+    document.getElementById('discipline-details-row').style.display = this.checked ? 'block' : 'none';
+  });
+
+  // Toggle equipment details
+  document.getElementById('sum-equipment')?.addEventListener('change', function () {
+    document.getElementById('equipment-details-row').style.display = this.checked ? 'block' : 'none';
+  });
+});
