@@ -1,16 +1,94 @@
-# React + Vite
+# ענפים — פלטפורמת ניהול מאמנים 🌿
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+אפליקציה מודרנית ויפה לניהול מאמנים, שיעורים, וציוד ספורטיבי.
 
-Currently, two official plugins are available:
+## 🎨 העיצוב
+- **צבעים**: כחול נייבי, אדום, לבן
+- **ממשק**: חדשני, קל להשתמש, responsive
+- **Animations**: חלקות ודינאמיות
+- **Font**: Heebo (עברית native)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 🚀 העלאה ל-Netlify
 
-## React Compiler
+### אפשרות 1: Drag & Drop (הדרך הקלה ביותר)
+1. היכנס ל [Netlify](https://app.netlify.com)
+2. גרור את תיקיית הפרויקט לתוך Netlify
+3. המתן לעלייה (כ-30 שניות)
+4. הסתיים! 🎉
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### אפשרות 2: Git (מומלץ)
+```bash
+# אתחול Git
+git init
+git add .
+git commit -m "Initial commit"
 
-## Expanding the ESLint configuration
+# העלאה ל-GitHub
+# 1. צור repo חדש ב-GitHub
+# 2. רץ:
+git remote add origin https://github.com/YOUR-USERNAME/anafim.git
+git branch -M main
+git push -u origin main
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+# חבר אל Netlify
+# 1. היכנס ל-Netlify
+# 2. לחץ "New site from Git"
+# 3. בחר GitHub + את הrepo שלך
+# 4. לחץ Deploy
+```
+
+## 🔧 הגדרות Firebase
+
+כדי שהאפליקציה תעבוד, תוצא להגדיר Firebase:
+
+1. היכנס ל [Firebase Console](https://console.firebase.google.com)
+2. צור פרויקט חדש: `anafim-platform`
+3. הוסף אפליקציה web
+4. העתק את ה-config ורשום אותו ב-`js/firebase-config.js`
+5. הפעל:
+   - ✅ Authentication (Email/Password + Google)
+   - ✅ Firestore Database (test mode)
+   - ✅ Cloud Storage (test mode)
+6. בהגדרות Authentication → Authorized domains → הוסף את הדומיין של Netlify
+
+## 📂 מבנה הקבצים
+```
+ענפים-פלטפורמה/
+├── index.html          # עמוד ההתחברות
+├── app.html            # האפליקציה הראשית
+├── css/
+│   └── style.css       # כל ה-styling (navy, red, white)
+├── js/
+│   ├── app.js          # לוגיקה הראשית
+│   └── firebase-config.js
+├── assets/
+│   └── logo_b64.txt
+├── netlify.toml        # הגדרות Netlify
+├── .gitignore          # קבצים שלא להעלות
+└── README.md           # קובץ זה
+```
+
+## 🌟 תכונות
+- ✅ כניסה עם Google ואימייל
+- ✅ ניהול מאמנים וקואורדינטורים
+- ✅ מערכי שיעור וסיכומים
+- ✅ לוח שנה של שיעורים
+- ✅ גלריית תמונות
+- ✅ מערכת הודעות
+- ✅ ניהול ציוד
+
+## 💬 תמיכה
+אם יש בעיה:
+1. בדוק את ה-Console (F12)
+2. וודא שהקבצים עלו ל-Netlify
+3. וודא שהFirebase מוגדר כמו שצריך
+
+## 📝 ערכתי לאחרונה
+- ✨ עדכון CSS חדשני
+- 🎨 צבעים navy, red, white
+- ⚡ Animations חדשות
+- 📱 Responsive design משופר
+
+---
+
+בנוי בקצב לתרומה ותמיכה 🚀

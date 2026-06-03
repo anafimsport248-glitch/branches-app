@@ -1,55 +1,801 @@
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ענפים — לוח בקרה</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌿</text></svg>">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-  <link rel="stylesheet" href="css/style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ענפים — פלטפורמת מאמנים</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌿</text></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/fullcalendar/6.1.10/index.global.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
 </head>
-<body class="app-page">
+<body>
 
-  <div class="app-layout">
+<button class="sidebar-toggle" id="sidebarToggle"><i class="fas fa-bars"></i></button>
 
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-logo">
-        <img src="assets/logo.svg" alt="ANAFIM" style="height:44px;width:auto;object-fit:contain">
-      </div>
-      <div class="sidebar-brand">
-        <span>פלטפורמת מאמנים</span>
-      </div>
-      <nav class="sidebar-nav">
-        <!-- Navigation items go here -->
-      </nav>
-    </aside>
+<div class="app-container">
 
-    <!-- Main content -->
-    <main class="main-content">
-      <div id="app-root">
-        <!-- App content rendered here -->
-      </div>
-    </main>
+<!-- ══════════════════ SIDEBAR ══════════════════ -->
+<aside class="sidebar" id="sidebar">
 
-  </div>
+    <div class="sidebar-header">
+        <div class="sidebar-logo">
+            <img src="assets/logo.svg" alt="ANAFIM" style="height:44px;width:auto;object-fit:contain;display:block">
+        </div>
+    </div>
 
-  <!-- Firebase -->
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
-  <script src="js/firebase-config.js"></script>
-  <script src="js/app.js"></script>
+    <div class="sidebar-user">
+        <div class="user-avatar" id="userInitials">?</div>
+        <div>
+            <div class="user-name" id="userName">טוען...</div>
+            <div class="user-role-badge" id="userRoleLabel">—</div>
+        </div>
+    </div>
 
-  <script>
-    // Redirect to login if not authenticated
-    auth.onAuthStateChanged(user => {
-      if (!user) window.location.href = 'index.html';
+    <nav class="sidebar-nav">
+        <div class="nav-section-title">ראשי</div>
+
+        <button class="nav-item active" data-section="dashboard">
+            <span class="nav-icon"><i class="fas fa-home"></i></span>
+            <span class="nav-label">דשבורד</span>
+        </button>
+
+        <button class="nav-item" data-section="lesson-plans">
+            <span class="nav-icon"><i class="fas fa-book-open"></i></span>
+            <span class="nav-label">מערכי שיעור</span>
+        </button>
+
+        <button class="nav-item" data-section="summary-form">
+            <span class="nav-icon"><i class="fas fa-clipboard-check"></i></span>
+            <span class="nav-label">סיכום שיעור</span>
+        </button>
+
+        <button class="nav-item" data-section="summaries">
+            <span class="nav-icon"><i class="fas fa-clipboard-list"></i></span>
+            <span class="nav-label">כל הסיכומים</span>
+        </button>
+
+        <button class="nav-item" data-section="calendar">
+            <span class="nav-icon"><i class="fas fa-calendar-alt"></i></span>
+            <span class="nav-label">לוח שנה</span>
+        </button>
+
+        <button class="nav-item" data-section="gallery">
+            <span class="nav-icon"><i class="fas fa-images"></i></span>
+            <span class="nav-label">גלריית תמונות</span>
+        </button>
+
+        <div class="nav-section-title manager-only" data-roles="manager">ניהול</div>
+
+        <button class="nav-item manager-only" data-section="coaches" data-roles="manager">
+            <span class="nav-icon"><i class="fas fa-users"></i></span>
+            <span class="nav-label">מאמנים ורכזים</span>
+        </button>
+
+        <button class="nav-item" data-section="equipment">
+            <span class="nav-icon"><i class="fas fa-tools"></i></span>
+            <span class="nav-label">ציוד</span>
+        </button>
+
+        <button class="nav-item" data-section="messages">
+            <span class="nav-icon"><i class="fas fa-comment-dots"></i></span>
+            <span class="nav-label">הודעות</span>
+            <span class="nav-badge" id="msg-badge" style="display:none">0</span>
+        </button>
+    </nav>
+
+    <div class="sidebar-footer">
+        <button class="nav-item logout" id="logoutBtn">
+            <span class="nav-icon"><i class="fas fa-sign-out-alt"></i></span>
+            <span class="nav-label">יציאה</span>
+        </button>
+    </div>
+</aside>
+
+<!-- ══════════════════ MAIN CONTENT ══════════════════ -->
+<main class="main-content">
+
+    <!-- ── DASHBOARD ─────────────────────────────────── -->
+    <section class="section active" id="sec-dashboard">
+
+        <!-- Manager Dashboard -->
+        <div id="manager-dashboard" class="manager-only">
+            <div class="page-header">
+                <div class="page-title">
+                    <h2>שלום, <span id="dashWelcomeName">מנהל</span> 👋</h2>
+                    <p id="dashDate"></p>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon blue"><i class="fas fa-users"></i></div>
+                    <div><div class="stat-value" id="stat-coaches">—</div><div class="stat-label">מאמנים פעילים</div></div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon green"><i class="fas fa-calendar-check"></i></div>
+                    <div><div class="stat-value" id="stat-sessions">—</div><div class="stat-label">אימונים השבוע</div></div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon orange"><i class="fas fa-clipboard-list"></i></div>
+                    <div><div class="stat-value" id="stat-summaries">—</div><div class="stat-label">סיכומים חדשים</div></div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon red"><i class="fas fa-tools"></i></div>
+                    <div><div class="stat-value" id="stat-equipment">—</div><div class="stat-label">בעיות ציוד פתוחות</div></div>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title"><i class="fas fa-clipboard-list"></i> סיכומים אחרונים</div>
+                        <button class="btn-ghost btn-sm" onclick="navigateTo('summaries')">הכל <i class="fas fa-arrow-left"></i></button>
+                    </div>
+                    <div id="recent-summaries"><div class="loading-center"><div class="spinner"></div></div></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title"><i class="fas fa-bolt"></i> פעולות מהירות</div>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:10px">
+                        <button class="btn-primary" onclick="openLessonPlanModal()"><i class="fas fa-plus"></i> העלאת מערך שיעור חדש</button>
+                        <button class="btn-secondary" onclick="openSessionModal()"><i class="fas fa-calendar-plus"></i> הוסף אימון ללוח שנה</button>
+                        <button class="btn-secondary" onclick="openCoachModal()"><i class="fas fa-user-plus"></i> הוסף מאמן/רכז</button>
+                        <button class="btn-secondary" onclick="navigateTo('summaries')"><i class="fas fa-search"></i> צפה בכל הסיכומים</button>
+                        <button class="btn-secondary" onclick="navigateTo('gallery')"><i class="fas fa-images"></i> גלריית תמונות</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Coach Dashboard -->
+        <div id="coach-dashboard" class="hide-for-coach" style="display:none">
+            <div class="page-header">
+                <div class="page-title">
+                    <h2>שלום, <span id="coachWelcomeName">מאמן</span> 👋</h2>
+                    <p id="coachDashDate"></p>
+                </div>
+            </div>
+
+            <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
+                <div class="stat-card">
+                    <div class="stat-icon orange"><i class="fas fa-dumbbell"></i></div>
+                    <div><div class="stat-value" id="stat-coach-today">—</div><div class="stat-label">אימונים היום</div></div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon blue"><i class="fas fa-calendar-alt"></i></div>
+                    <div><div class="stat-value" id="stat-coach-sessions">—</div><div class="stat-label">סה"כ אימונים</div></div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon green"><i class="fas fa-clipboard-check"></i></div>
+                    <div><div class="stat-value" id="stat-coach-summaries">—</div><div class="stat-label">סיכומים שלי</div></div>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div id="today-session-info">
+                    <div class="card" style="border-right:4px solid var(--border)">
+                        <div class="card-title text-muted"><i class="fas fa-dumbbell"></i> אין אימונים מתוכננים להיום</div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-title mb-16"><i class="fas fa-bolt"></i> פעולות מהירות</div>
+                    <div style="display:flex;flex-direction:column;gap:10px">
+                        <button class="btn-primary" onclick="navigateTo('summary-form')"><i class="fas fa-clipboard-check"></i> מלא סיכום שיעור</button>
+                        <button class="btn-secondary" onclick="navigateTo('lesson-plans')"><i class="fas fa-book-open"></i> צפה במערכי שיעור</button>
+                        <button class="btn-secondary" onclick="navigateTo('calendar')"><i class="fas fa-calendar-alt"></i> לוח האימונים שלי</button>
+                        <button class="btn-secondary" onclick="navigateTo('gallery')"><i class="fas fa-camera"></i> העלה תמונות</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── LESSON PLANS ───────────────────────────────── -->
+    <section class="section" id="sec-lesson-plans">
+        <div class="page-header">
+            <div class="page-title">
+                <h2><i class="fas fa-book-open" style="color:var(--primary-lighter);font-size:1.4rem"></i> מערכי שיעור</h2>
+                <p>ספריית מערכי השיעור של ענפים</p>
+            </div>
+            <div class="page-actions">
+                <div class="search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" placeholder="חפש לפי שם או מספר..." id="lp-search" oninput="filterLessonPlans(this.value)">
+                </div>
+                <button class="btn-primary manager-only" onclick="openLessonPlanModal()">
+                    <i class="fas fa-plus"></i> מערך חדש
+                </button>
+            </div>
+        </div>
+
+        <div id="lesson-plans-list" class="lesson-plans-list">
+            <div class="loading-center"><div class="spinner"></div></div>
+        </div>
+    </section>
+
+    <!-- ── SUMMARY FORM ───────────────────────────────── -->
+    <section class="section" id="sec-summary-form">
+        <div class="page-header">
+            <div class="page-title">
+                <h2><i class="fas fa-clipboard-check" style="color:var(--primary-lighter);font-size:1.4rem"></i> סיכום שיעור</h2>
+                <p>מלא את הפרטים — הסיכום יישלח ישירות למנהל</p>
+            </div>
+        </div>
+
+        <form id="summaryForm" onsubmit="submitSummary(event)">
+            <!-- Section 1: פרטי האימון -->
+            <div class="card mb-20">
+                <div class="section-block-title"><i class="fas fa-info-circle"></i> פרטי האימון</div>
+                <div class="form-grid">
+                    <div class="form-group-app">
+                        <label>בית ספר *</label>
+                        <input type="text" id="sum-school" placeholder="שם בית הספר" required>
+                    </div>
+                    <div class="form-group-app">
+                        <label>קבוצה / כיתה *</label>
+                        <input type="text" id="sum-group" placeholder="לדוגמה: כיתה ה׳2" required>
+                    </div>
+                    <div class="form-group-app">
+                        <label>תאריך *</label>
+                        <input type="date" id="sum-date" required>
+                    </div>
+                    <div class="form-group-app">
+                        <label>מספר משתתפים</label>
+                        <input type="number" id="sum-attendance" placeholder="0" min="0">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section 2: דירוג ותוכן -->
+            <div class="card mb-20">
+                <div class="section-block-title"><i class="fas fa-star"></i> דירוג ותוכן השיעור</div>
+
+                <div class="form-group-app mb-20">
+                    <label>דירוג השיעור הכללי</label>
+                    <div class="star-rating" style="margin-top:6px">
+                        <input type="radio" name="rating" id="r5" value="5"><label for="r5" title="מצוין">★</label>
+                        <input type="radio" name="rating" id="r4" value="4"><label for="r4" title="טוב מאד">★</label>
+                        <input type="radio" name="rating" id="r3" value="3" checked><label for="r3" title="טוב">★</label>
+                        <input type="radio" name="rating" id="r2" value="2"><label for="r2" title="בינוני">★</label>
+                        <input type="radio" name="rating" id="r1" value="1"><label for="r1" title="גרוע">★</label>
+                    </div>
+                </div>
+
+                <div class="form-group-app mb-16">
+                    <label>סיכום השיעור *</label>
+                    <textarea id="sum-summary" placeholder="תאר את מהלך השיעור — מה עשיתם, מה עבד, מה אפשר לשפר..." required style="min-height:130px"></textarea>
+                </div>
+
+                <div class="form-group-app">
+                    <label>נקודות חיוביות / הצלחות</label>
+                    <textarea id="sum-highlights" placeholder="מה בלט לטובה? ילדים שהתקדמו, רגעים מיוחדים..."></textarea>
+                </div>
+            </div>
+
+            <!-- Section 3: בעיות -->
+            <div class="card mb-20">
+                <div class="section-block-title"><i class="fas fa-exclamation-triangle"></i> דיווח בעיות</div>
+
+                <div class="toggle-row">
+                    <div>
+                        <div class="toggle-row-label">בעיות משמעת</div>
+                        <div class="toggle-row-desc">האם היו בעיות משמעת בשיעור?</div>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="sum-discipline">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div id="discipline-details-row" style="display:none;padding:12px 0">
+                    <div class="form-group-app">
+                        <label>פרט את בעיית המשמעת</label>
+                        <textarea id="sum-discipline-details" placeholder="תאר מה קרה, עם מי, ואיך התמודדת..."></textarea>
+                    </div>
+                </div>
+
+                <div class="toggle-row">
+                    <div>
+                        <div class="toggle-row-label">ציוד שנפגע / חסר</div>
+                        <div class="toggle-row-desc">האם הייתה בעיה עם ציוד?</div>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="sum-equipment">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div id="equipment-details-row" style="display:none;padding:12px 0">
+                    <div class="form-group-app">
+                        <label>פרט את בעיית הציוד</label>
+                        <textarea id="sum-equipment-details" placeholder="איזה ציוד? מה קרה לו? מה נדרש?..."></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section 4: תמונות והערות -->
+            <div class="card mb-24">
+                <div class="section-block-title"><i class="fas fa-camera"></i> תמונות ומידע נוסף</div>
+
+                <div class="mb-20">
+                    <label class="form-group-app" style="gap:8px">
+                        <span style="font-size:.875rem;font-weight:700">תמונות מהאימון</span>
+                        <label class="photo-upload-area" for="sum-photos" style="cursor:pointer">
+                            <span class="upload-icon">📸</span>
+                            <p>לחץ או גרור תמונות לכאן</p>
+                            <span style="color:var(--primary-lighter);font-size:.8rem">PNG, JPG, HEIC עד 10MB לתמונה</span>
+                            <input type="file" id="sum-photos" accept="image/*" multiple>
+                        </label>
+                    </label>
+                    <div id="photo-preview" class="photo-grid mt-16" style="display:none"></div>
+                </div>
+
+                <div class="form-group-app">
+                    <label>הערות נוספות</label>
+                    <textarea id="sum-notes" placeholder="כל מה שנשאר — הצעות, תגובות, בקשות..."></textarea>
+                </div>
+            </div>
+
+            <div style="display:flex;gap:12px;justify-content:flex-start">
+                <button type="submit" class="btn-primary" id="submitSummaryBtn" style="padding:14px 32px;font-size:1rem">
+                    <i class="fas fa-paper-plane"></i> שלח סיכום למנהל
+                </button>
+                <button type="button" class="btn-secondary" onclick="document.getElementById('summaryForm').reset();showToast('הטופס נוקה','info')">
+                    <i class="fas fa-redo"></i> נקה טופס
+                </button>
+            </div>
+        </form>
+    </section>
+
+    <!-- ── ALL SUMMARIES ──────────────────────────────── -->
+    <section class="section" id="sec-summaries">
+        <div class="page-header">
+            <div class="page-title">
+                <h2><i class="fas fa-clipboard-list" style="color:var(--primary-lighter);font-size:1.4rem"></i> סיכומי שיעורים</h2>
+                <p>כל הסיכומים שנשלחו</p>
+            </div>
+            <div class="page-actions">
+                <div class="search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" placeholder="חפש לפי בית ספר / מאמן...">
+                </div>
+                <select class="filter-select" onchange="filterSummaries(this.value)">
+                    <option value="">כל הסיכומים</option>
+                    <option value="discipline">בעיות משמעת</option>
+                    <option value="equipment">בעיות ציוד</option>
+                </select>
+            </div>
+        </div>
+        <div id="summaries-list">
+            <div class="loading-center"><div class="spinner"></div></div>
+        </div>
+    </section>
+
+    <!-- ── CALENDAR ───────────────────────────────────── -->
+    <section class="section" id="sec-calendar">
+        <div class="page-header">
+            <div class="page-title">
+                <h2><i class="fas fa-calendar-alt" style="color:var(--primary-lighter);font-size:1.4rem"></i> לוח שנה</h2>
+                <p>מערכת האימונים — שבועי, חודשי ושנתי</p>
+            </div>
+            <div class="page-actions">
+                <button class="btn-primary manager-only" onclick="openSessionModal()">
+                    <i class="fas fa-plus"></i> הוסף אימון
+                </button>
+            </div>
+        </div>
+        <div class="card">
+            <div id="calendar"></div>
+        </div>
+    </section>
+
+    <!-- ── GALLERY ────────────────────────────────────── -->
+    <section class="section" id="sec-gallery">
+        <div class="page-header">
+            <div class="page-title">
+                <h2><i class="fas fa-images" style="color:var(--primary-lighter);font-size:1.4rem"></i> גלריית תמונות</h2>
+                <p>תמונות מאימוני ענפים</p>
+            </div>
+            <div class="page-actions">
+                <label for="gallery-file-input" class="btn-primary" id="gallery-upload-btn" style="cursor:pointer">
+                    <i class="fas fa-upload"></i> העלה תמונות
+                </label>
+                <input type="file" id="gallery-file-input" accept="image/*" multiple style="display:none" onchange="uploadGalleryPhotos(this)">
+            </div>
+        </div>
+        <div class="card">
+            <div id="gallery-grid" class="photo-grid"></div>
+        </div>
+    </section>
+
+    <!-- ── COACHES ────────────────────────────────────── -->
+    <section class="section" id="sec-coaches">
+        <div class="page-header">
+            <div class="page-title">
+                <h2><i class="fas fa-users" style="color:var(--primary-lighter);font-size:1.4rem"></i> מאמנים ורכזים</h2>
+                <p>ניהול צוות ענפים</p>
+            </div>
+            <div class="page-actions">
+                <button class="btn-primary" onclick="openCoachModal()">
+                    <i class="fas fa-user-plus"></i> הוסף חבר צוות
+                </button>
+            </div>
+        </div>
+        <div id="coaches-grid">
+            <div class="loading-center"><div class="spinner"></div></div>
+        </div>
+    </section>
+
+    <!-- ── EQUIPMENT ──────────────────────────────────── -->
+    <section class="section" id="sec-equipment">
+        <div class="page-header">
+            <div class="page-title">
+                <h2><i class="fas fa-tools" style="color:var(--primary-lighter);font-size:1.4rem"></i> מעקב ציוד</h2>
+                <p>מצאי ציוד לפי בית ספר</p>
+            </div>
+            <div class="page-actions">
+                <button class="btn-primary" onclick="openEquipmentModal()">
+                    <i class="fas fa-plus"></i> דווח על ציוד
+                </button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>פריט</th>
+                            <th>בית ספר</th>
+                            <th>כמות</th>
+                            <th>מצב</th>
+                            <th>הערות</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="equipment-body">
+                        <tr><td colspan="6"><div class="loading-center"><div class="spinner"></div></div></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── MESSAGES ───────────────────────────────────── -->
+    <section class="section" id="sec-messages">
+        <div class="page-header">
+            <div class="page-title">
+                <h2><i class="fas fa-comment-dots" style="color:var(--primary-lighter);font-size:1.4rem"></i> הודעות</h2>
+                <p>תקשורת ישירה עם הצוות</p>
+            </div>
+            <div class="page-actions">
+                <button class="btn-primary" onclick="openNewMessageModal()">
+                    <i class="fas fa-pen"></i> הודעה חדשה
+                </button>
+            </div>
+        </div>
+
+        <div class="messages-panel card" style="padding:0">
+            <div class="messages-sidebar">
+                <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:.8rem;font-weight:700;color:var(--text-2)">שיחות</div>
+                <div id="message-list"><div class="loading-center"><div class="spinner"></div></div></div>
+            </div>
+            <div class="messages-main" id="chat-panel" style="display:none;flex-direction:column">
+                <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-weight:700;font-size:.95rem" id="chat-header-name">—</div>
+                <div class="messages-thread" id="messages-thread"></div>
+                <div class="message-input-row">
+                    <input type="text" id="msg-input" placeholder="הקלד הודעה...">
+                    <button class="btn-primary btn-sm" onclick="sendMessage()"><i class="fas fa-paper-plane"></i></button>
+                </div>
+            </div>
+            <div class="messages-main" id="chat-empty" style="display:flex;align-items:center;justify-content:center;color:var(--text-3)">
+                <div style="text-align:center"><i class="fas fa-comments" style="font-size:3rem;opacity:.3;display:block;margin-bottom:12px"></i><p>בחר שיחה להצגה</p></div>
+            </div>
+        </div>
+    </section>
+
+</main>
+</div>
+
+<!-- ══════════════════ MODALS ══════════════════ -->
+
+<!-- Lesson Plan Modal -->
+<div class="modal-overlay" id="lessonPlanModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3><i class="fas fa-book-open" style="color:var(--primary-lighter)"></i> מערך שיעור חדש</h3>
+            <button class="modal-close" onclick="closeLessonPlanModal()">✕</button>
+        </div>
+        <form id="lessonPlanForm" onsubmit="submitLessonPlan(event)">
+            <div class="form-grid">
+                <div class="form-group-app">
+                    <label>מספר מערך *</label>
+                    <input type="number" id="lp-number" placeholder="1" min="1" required>
+                </div>
+                <div class="form-group-app">
+                    <label>תאריך *</label>
+                    <input type="date" id="lp-date" required>
+                </div>
+                <div class="form-group-app full-width">
+                    <label>שם המערך *</label>
+                    <input type="text" id="lp-title" placeholder="לדוגמה: מסירות ויסוד" required>
+                </div>
+                <div class="form-group-app full-width">
+                    <label>תיאור קצר</label>
+                    <textarea id="lp-desc" placeholder="נושאים עיקריים, מטרות השיעור..."></textarea>
+                </div>
+                <div class="form-group-app full-width">
+                    <label><i class="fab fa-youtube" style="color:var(--danger)"></i> קישור לסרטון (YouTube / Vimeo)</label>
+                    <input type="url" id="lp-video" placeholder="https://youtube.com/...">
+                </div>
+                <div class="form-group-app full-width">
+                    <label>קובץ מערך שיעור (PDF / Word)</label>
+                    <label class="file-input-label" for="lp-file">
+                        <i class="fas fa-paperclip"></i>
+                        <span id="lp-file-name">לחץ לבחירת קובץ</span>
+                    </label>
+                    <input type="file" id="lp-file" accept=".pdf,.doc,.docx,.ppt,.pptx" style="display:none"
+                           onchange="document.getElementById('lp-file-name').textContent = this.files[0]?.name || 'לחץ לבחירת קובץ'">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" class="btn-primary" id="submitLessonPlanBtn">
+                    <i class="fas fa-save"></i> שמור מערך שיעור
+                </button>
+                <button type="button" class="btn-secondary" onclick="closeLessonPlanModal()">ביטול</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Session Modal -->
+<div class="modal-overlay" id="sessionModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3><i class="fas fa-calendar-plus" style="color:var(--primary-lighter)"></i> הוסף אימון ללוח</h3>
+            <button class="modal-close" onclick="closeSessionModal()">✕</button>
+        </div>
+        <form id="sessionForm" onsubmit="submitSession(event)">
+            <div class="form-grid">
+                <div class="form-group-app full-width">
+                    <label>מאמן *</label>
+                    <select id="sess-coach" required>
+                        <option value="">בחר מאמן...</option>
+                    </select>
+                </div>
+                <div class="form-group-app">
+                    <label>בית ספר *</label>
+                    <input type="text" id="sess-school" placeholder="שם בית הספר" required>
+                </div>
+                <div class="form-group-app">
+                    <label>קבוצה</label>
+                    <input type="text" id="sess-group" placeholder="לדוגמה: כיתה ד׳1">
+                </div>
+                <div class="form-group-app">
+                    <label>תאריך *</label>
+                    <input type="date" id="sess-date" required>
+                </div>
+                <div class="form-group-app">
+                    <label>שעת התחלה</label>
+                    <input type="time" id="sess-start">
+                </div>
+                <div class="form-group-app">
+                    <label>שעת סיום</label>
+                    <input type="time" id="sess-end">
+                </div>
+                <div class="form-group-app full-width">
+                    <label>הערות</label>
+                    <input type="text" id="sess-notes" placeholder="הערות נוספות...">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" class="btn-primary"><i class="fas fa-check"></i> הוסף לוח שנה</button>
+                <button type="button" class="btn-secondary" onclick="closeSessionModal()">ביטול</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Summary View Modal -->
+<div class="modal-overlay" id="summaryModal">
+    <div class="modal modal-lg">
+        <div class="modal-header">
+            <h3><i class="fas fa-clipboard-list" style="color:var(--primary-lighter)"></i> סיכום שיעור</h3>
+            <button class="modal-close" onclick="document.getElementById('summaryModal').classList.remove('show')">✕</button>
+        </div>
+        <div id="summaryModalContent"></div>
+    </div>
+</div>
+
+<!-- Coach Modal -->
+<div class="modal-overlay" id="coachModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3><i class="fas fa-user-plus" style="color:var(--primary-lighter)"></i> הוסף חבר צוות</h3>
+            <button class="modal-close" onclick="closeCoachModal()">✕</button>
+        </div>
+        <form id="coachForm" onsubmit="submitCoach(event)">
+            <div class="form-grid">
+                <div class="form-group-app">
+                    <label>שם מלא *</label>
+                    <input type="text" id="new-coach-name" required placeholder="ישראל ישראלי">
+                </div>
+                <div class="form-group-app">
+                    <label>טלפון</label>
+                    <input type="tel" id="new-coach-phone" placeholder="050-0000000">
+                </div>
+                <div class="form-group-app full-width">
+                    <label>כתובת אימייל *</label>
+                    <input type="email" id="new-coach-email" required placeholder="coach@email.com">
+                    <div class="form-note">⚠️ לאחר ההוספה, שלח לאותו מאמן אימייל לאיפוס סיסמה דרך Firebase Console</div>
+                </div>
+                <div class="form-group-app">
+                    <label>תפקיד *</label>
+                    <select id="new-coach-role" required>
+                        <option value="coach">מאמן</option>
+                        <option value="coordinator">רכז בית ספר</option>
+                    </select>
+                </div>
+                <div class="form-group-app">
+                    <label>בית ספר</label>
+                    <input type="text" id="new-coach-school" placeholder="שם בית הספר">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" class="btn-primary"><i class="fas fa-user-plus"></i> הוסף</button>
+                <button type="button" class="btn-secondary" onclick="closeCoachModal()">ביטול</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Equipment Modal -->
+<div class="modal-overlay" id="equipmentModal">
+    <div class="modal modal-sm">
+        <div class="modal-header">
+            <h3><i class="fas fa-tools" style="color:var(--primary-lighter)"></i> דווח על ציוד</h3>
+            <button class="modal-close" onclick="closeEquipmentModal()">✕</button>
+        </div>
+        <form id="equipmentForm" onsubmit="submitEquipment(event)">
+            <div class="form-grid">
+                <div class="form-group-app full-width">
+                    <label>שם הפריט *</label>
+                    <input type="text" id="eq-name" required placeholder="כדורסל, חישוק, מחבט...">
+                </div>
+                <div class="form-group-app">
+                    <label>בית ספר *</label>
+                    <input type="text" id="eq-school" required placeholder="שם בית הספר">
+                </div>
+                <div class="form-group-app">
+                    <label>כמות</label>
+                    <input type="number" id="eq-quantity" value="1" min="1">
+                </div>
+                <div class="form-group-app full-width">
+                    <label>מצב *</label>
+                    <select id="eq-status" required>
+                        <option value="good">תקין</option>
+                        <option value="damaged">פגום</option>
+                        <option value="broken">מקולקל / לתיקון</option>
+                    </select>
+                </div>
+                <div class="form-group-app full-width">
+                    <label>הערות</label>
+                    <textarea id="eq-notes" placeholder="פרט את המצב, מה נדרש..." style="min-height:70px"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" class="btn-primary"><i class="fas fa-save"></i> שמור</button>
+                <button type="button" class="btn-secondary" onclick="closeEquipmentModal()">ביטול</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- New Message Modal -->
+<div class="modal-overlay" id="newMessageModal">
+    <div class="modal modal-sm">
+        <div class="modal-header">
+            <h3><i class="fas fa-pen" style="color:var(--primary-lighter)"></i> הודעה חדשה</h3>
+            <button class="modal-close" onclick="closeNewMessageModal()">✕</button>
+        </div>
+        <form id="newMessageForm" onsubmit="submitNewMessage(event)">
+            <div class="form-group-app mb-16">
+                <label>שלח אל *</label>
+                <select id="msg-to" required>
+                    <option value="">בחר נמען...</option>
+                </select>
+            </div>
+            <div class="form-group-app mb-16">
+                <label>תוכן ההודעה *</label>
+                <textarea id="msg-first-content" required placeholder="כתוב הודעה..." style="min-height:100px"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" class="btn-primary"><i class="fas fa-paper-plane"></i> שלח</button>
+                <button type="button" class="btn-secondary" onclick="closeNewMessageModal()">ביטול</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Toast Container -->
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fullcalendar/6.1.10/index.global.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fullcalendar/6.1.10/locales-all.global.min.js" crossorigin="anonymous"></script>
+<script async src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/index.min.js" crossorigin="anonymous"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/app.js"></script>
+
+<script>
+    // Set today's date as default in forms
+    document.addEventListener('DOMContentLoaded', () => {
+        const today = new Date().toISOString().split('T')[0];
+        ['sum-date', 'lp-date'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = today;
+        });
+
+        // Dashboard date
+        const opts = { weekday:'long', year:'numeric', month:'long', day:'numeric' };
+        const dateStr = new Date().toLocaleDateString('he-IL', opts);
+        ['dashDate','coachDashDate'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = dateStr;
+        });
     });
-  </script>
 
+    // Show role-specific dashboard
+    document.addEventListener('userLoaded', () => {
+        if (currentUserData?.role === 'coach' || currentUserData?.role === 'coordinator') {
+            document.getElementById('manager-dashboard').style.display = 'none';
+            document.getElementById('coach-dashboard').style.display = 'block';
+            document.getElementById('coachWelcomeName').textContent = currentUserData.name?.split(' ')[0] || 'מאמן';
+        } else {
+            document.getElementById('dashWelcomeName').textContent = currentUserData?.name?.split(' ')[0] || 'מנהל';
+        }
+    });
+
+    // Photo preview in summary form
+    document.getElementById('sum-photos')?.addEventListener('change', function() {
+        const preview = document.getElementById('photo-preview');
+        preview.innerHTML = '';
+        if (this.files.length) {
+            preview.style.display = 'grid';
+            Array.from(this.files).forEach(file => {
+                const reader = new FileReader();
+                reader.onload = e => {
+                    preview.innerHTML += `<div class="photo-item"><img src="${e.target.result}" alt="${file.name}"></div>`;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+    });
+
+    // Filter lesson plans
+    function filterLessonPlans(query) {
+        const cards = document.querySelectorAll('.lesson-plan-card');
+        cards.forEach(card => {
+            const text = card.textContent.toLowerCase();
+            card.style.display = text.includes(query.toLowerCase()) ? '' : 'none';
+        });
+    }
+
+    // Filter summaries
+    function filterSummaries(type) {
+        const cards = document.querySelectorAll('.summary-card');
+        cards.forEach(card => {
+            if (!type) { card.style.display = ''; return; }
+            card.style.display = card.classList.contains(type) ? '' : 'none';
+        });
+    }
+</script>
 </body>
 </html>

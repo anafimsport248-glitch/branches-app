@@ -1,0 +1,21 @@
+[build]
+command = "echo 'No build required'"
+publish = "."
+
+[[redirects]]
+from = "/*"
+to = "/app.html"
+status = 200
+
+[headers]
+[[headers.values]]
+key = "Cache-Control"
+value = "max-age=3600"
+
+[[headers.values]]
+key = "X-Content-Type-Options"
+value = "nosniff"
+
+[[headers.values]]
+key = "X-Frame-Options"
+value = "SAMEORIGIN"
