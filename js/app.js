@@ -12,7 +12,44 @@ let calendarInitialized = false;
 let calendar;
 let unsubscribers = [];
 
+// ── Navigation (runs immediately, independent of Firebase) ───
+function navigateTo(sectionName) {
+  document.querySelectorAll('.section').forEach(sec => sec.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
+  const target = document.getElementById('sec-' + sectionName);
+  if (target) target.classList.add('active');
+  const navBtn = document.querySelector(`.nav-item[data-section="${sectionName}"]`);
+  if (navBtn) navBtn.classList.add('active');
+  if (sectionName === 'calendar' && !calendarInitialized) {
+    setTimeout(() => { initCalendar(); }, 50);
+  }
+  if (window.innerWidth <= 768) {
+    document.getElementById('sidebar')?.classList.remove('open');
+  }
+}
+
+document.querySelectorAll('.nav-item[data-section]').forEach(btn => {
+  btn.addEventListener('click', () => navigateTo(btn.dataset.section));
+});
+
+document.getElementById('sidebarToggle')?.addEventListener('click', () => {
+  document.getElementById('sidebar')?.classList.toggle('open');
+});
+
+document.addEventListener('click', (e) => {
+  if (window.innerWidth <= 768) {
+    const sidebar = document.getElementById('sidebar');
+    const toggle  = document.getElementById('sidebarToggle');
+    if (sidebar && !sidebar.contains(e.target) && !toggle?.contains(e.target)) {
+      sidebar.classList.remove('open');
+    }
+  }
+});
+
 // ── Auth State ───────────────────────────────────────────────
+if (typeof auth === 'undefined') {
+  console.error('Firebase auth not initialized');
+} else {
 auth.onAuthStateChanged(async (user) => {
   if (!user) {
     window.location.href = 'index.html';
@@ -67,6 +104,7 @@ auth.onAuthStateChanged(async (user) => {
     showToast('שגיאה בטעינת נתוני המשתמש', 'error');
   }
 });
+} // end if auth
 
 // ── Load All Data ────────────────────────────────────────────
 function loadAllData() {
@@ -89,55 +127,6 @@ function loadAllData() {
   }
 }
 
-// ── Navigation ───────────────────────────────────────────────
-function navigateTo(sectionName) {
-  // Hide all sections
-  document.querySelectorAll('.section').forEach(sec => sec.classList.remove('active'));
-  // Remove active from all nav items
-  document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
-
-  // Show target section
-  const target = document.getElementById('sec-' + sectionName);
-  if (target) target.classList.add('active');
-
-  // Activate matching nav button
-  const navBtn = document.querySelector(`.nav-item[data-section="${sectionName}"]`);
-  if (navBtn) navBtn.classList.add('active');
-
-  // Render calendar when navigating to it (needs to be visible first)
-  if (sectionName === 'calendar' && !calendarInitialized) {
-    setTimeout(() => { initCalendar(); }, 50);
-  }
-
-  // Close sidebar on mobile
-  if (window.innerWidth <= 768) {
-    document.getElementById('sidebar')?.classList.remove('open');
-  }
-}
-
-// Wire up nav items
-document.querySelectorAll('.nav-item[data-section]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    navigateTo(btn.dataset.section);
-  });
-});
-
-// ── Sidebar Mobile Toggle ────────────────────────────────────
-document.getElementById('sidebarToggle')?.addEventListener('click', () => {
-  document.getElementById('sidebar')?.classList.toggle('open');
-});
-
-// Close sidebar when clicking outside on mobile
-document.addEventListener('click', (e) => {
-  if (window.innerWidth <= 768) {
-    const sidebar = document.getElementById('sidebar');
-    const toggle  = document.getElementById('sidebarToggle');
-    if (sidebar && !sidebar.contains(e.target) && !toggle?.contains(e.target)) {
-      sidebar.classList.remove('open');
-    }
-  }
-});
-
 // ── Toast ─────────────────────────────────────────────────────
 function showToast(message, type = 'info') {
   const container = document.getElementById('toastContainer');
@@ -158,8 +147,10 @@ function showToast(message, type = 'info') {
 
 // ── FullCalendar ──────────────────────────────────────────────
 function initCalendar() {
+  try {
   const el = document.getElementById('calendar');
   if (!el || calendarInitialized) return;
+  if (typeof FullCalendar === 'undefined') { console.warn('FullCalendar not loaded'); return; }
   calendarInitialized = true;
 
   calendar = new FullCalendar.Calendar(el, {
@@ -193,7 +184,8 @@ function initCalendar() {
         extendedProps: { school: d.school, coachName: d.coachName }
       });
     });
-  });
+  }).catch(err => console.warn('Calendar sessions load error:', err));
+  } catch (err) { console.error('initCalendar error:', err); }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1096,8 +1088,7 @@ document.querySelectorAll('.modal-overlay').forEach(overlay => {
 
 // ── DOMContentLoaded ─────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  // Initialize calendar
-  initCalendar();
+  // Do NOT init calendar here — only when navigating to it (it may be hidden)
 
   // Toggle discipline details
   document.getElementById('sum-discipline')?.addEventListener('change', function () {
